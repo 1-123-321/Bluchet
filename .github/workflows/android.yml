@@ -22,7 +22,10 @@ jobs:
 
       - name: Install dependencies
         run: flutter pub get
-
+        
+      - name: Generate Android platform
+        run: flutter create --platforms=android .
+        
       - name: Build APK
         run: flutter build apk --release
 
