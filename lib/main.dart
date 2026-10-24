@@ -165,24 +165,20 @@ class _StartPageState extends State<StartPage> {
     try {
       final row = await db
           .from('profiles')
-          .select('email')
+          .select('username')
           .eq('username', username)
           .maybeSingle();
 
-      final hiddenEmail = row?['email']?.toString();
-      if (hiddenEmail == null || hiddenEmail.isEmpty) {
+      if (row == null) {
         throw Exception('Nincs ilyen felhasználó.');
       }
 
-      await db.auth.signInWithPassword(
-        email: hiddenEmail,
-        password: password,
-      );
-
-      if (!mounted) return;
-
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const HomePage()),
+      // `public.profiles.email` is intentionally not readable for anonymous users.
+      // The app must resolve the auth email through a trusted server-side auth flow
+      // or a username-based login strategy; it cannot be fetched from the public profiles table.
+      throw Exception(
+        'A bejelentkezéshez a profil e-mailje nem olvasható ki a public.profiles táblából. '
+        'A projekt jelenlegi RLS- és Auth-beállítása miatt ezt a lekérdezést szándékosan korlátoztuk.',
       );
     } catch (e) {
       if (mounted) {
@@ -1028,9 +1024,9 @@ class _ProfilePageState extends State<ProfilePage> {
           .eq('id', user.id)
           .maybeSingle();
 
-      final username = row?['username']?.toString() ?? 'felhasznalo';
-
       if (!mounted) return;
+
+      final username = row?['username']?.toString() ?? 'felhasznalo';
 
       _usernameController.text = username;
       setState(() {
@@ -1072,9 +1068,8 @@ class _ProfilePageState extends State<ProfilePage> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('A felhasználónév frissítve.')),
+        const SnackBar(content: Text('A profil frissítve.')),
       );
-      Navigator.pop(context);
     } catch (e) {
       if (mounted) {
         setState(() => _error = _friendly(e));
@@ -1092,57 +1087,41 @@ class _ProfilePageState extends State<ProfilePage> {
       appBar: AppBar(title: const Text('Profil')),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Felhasználónév',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      controller: _usernameController,
-                      decoration: const InputDecoration(
-                        hintText: 'pl. jani_42',
-                        prefixIcon: Icon(Icons.person),
-                      ),
-                      validator: (value) {
-                        final text = _normalizeUsername(value ?? '');
-                        if (text.isEmpty) {
-                          return 'Adj meg egy felhasználónevet.';
-                        }
-                        if (text.length < 3) {
-                          return 'Legalább 3 karakter hosszúnak kell lennie.';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 24),
-                    if (_error != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Text(
-                          _error!,
-                          style: const TextStyle(color: Colors.redAccent),
-                        ),
-                      ),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _saving ? null : _save,
-                        child: Text(_saving ? 'Mentés...' : 'Mentés'),
-                      ),
-                    ),
-                  ],
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(color: Colors.redAccent),
+                  ),
                 ),
+              TextFormField(
+                controller: _usernameController,
+                enabled: !_loading,
+                decoration: const InputDecoration(
+                  labelText: 'Felhasználónév',
+                  prefixIcon: Icon(Icons.person),
+                ),
+                validator: (value) {
+                  final text = (value ?? '').trim();
+                  if (text.isEmpty) return 'Adj meg felhasználónevet.';
+                  if (text.length < 3) return 'Legalább 3 karakter.';
+                  return null;
+                },
               ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _saving || _loading ? null : _save,
+                child: Text(_saving ? 'Mentés...' : 'Mentés'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
