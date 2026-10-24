@@ -10,6 +10,13 @@ final _uuid = const Uuid();
 
 SupabaseClient get db => Supabase.instance.client;
 
+String _friendly(Object error) {
+  final text = error.toString();
+  return text.startsWith('Exception: ')
+      ? text.replaceFirst('Exception: ', '')
+      : text;
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -628,6 +635,132 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
+class ChatPage extends StatelessWidget {
+  final String conversationId;
+  final String title;
+
+  const ChatPage({
+    super.key,
+    required this.conversationId,
+    required this.title,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: Center(
+        child: Text('Beszélgetés: $conversationId'),
+      ),
+    );
+  }
+}
+
+class GroupCreatePage extends StatefulWidget {
+  const GroupCreatePage({super.key});
+
+  @override
+  State<GroupCreatePage> createState() => _GroupCreatePageState();
+}
+
+class _GroupCreatePageState extends State<GroupCreatePage> {
+  final _nameController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _create() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    Navigator.pop(context, true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Csoport létrehozása')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  hintText: 'Csoport neve',
+                  prefixIcon: Icon(Icons.group),
+                ),
+                validator: (value) {
+                  final text = (value ?? '').trim();
+                  if (text.isEmpty) return 'Adj meg egy nevet.';
+                  if (text.length < 2) return 'Legalább 2 karakter.';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _create,
+                  child: const Text('Létrehozás'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class EmailVerificationGate extends StatelessWidget {
+  final VoidCallback onVerified;
+
+  const EmailVerificationGate({
+    super.key,
+    required this.onVerified,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.verified_user, size: 64),
+              const SizedBox(height: 16),
+              const Text(
+                'E-mail ellenőrzés szükséges',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Az alkalmazás használatához ellenőrizned kell az e-mail címed.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: onVerified,
+                child: const Text('Frissítés'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
 
@@ -698,7 +831,7 @@ class _ProfilePageState extends State<ProfilePage> {
     }
 
     final username = _usernameController.text.trim();
-    final normalized = username.replaceAll(RegExp(r'\\s+'), '_');
+    final normalized = username.replaceAll(RegExp(r'\s+'), '_');
 
     setState(() {
       _saving = true;
@@ -743,8 +876,10 @@ class _ProfilePageState extends State<ProfilePage> {
                   children: [
                     const Text(
                       'Felhasználónév',
-                      style:
-                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     TextFormField(
@@ -760,4 +895,30 @@ class _ProfilePageState extends State<ProfilePage> {
                         }
                         if (text.length < 3) {
                           return 'Legalább 3 karakter hosszúnak kell lennie.';
-       
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 24),
+                    if (_error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Text(
+                          _error!,
+                          style: const TextStyle(color: Colors.redAccent),
+                        ),
+                      ),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _saving ? null : _save,
+                        child: Text(_saving ? 'Mentés...' : 'Mentés'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+      ),
+    );
+  }
+}
