@@ -11,11 +11,11 @@ dependencies:
   flutter_secure_storage: ^9.2.4
   uuid: ^4.5.1
   intl: ^0.20.2
-dev_dependencies:
-  flutter_launcher_icons: "^0.13.1"
+dev_dependencies: 
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: "^0.13.1"
 
 flutter:
   uses-material-design: true
