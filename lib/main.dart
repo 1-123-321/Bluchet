@@ -345,7 +345,7 @@ class _HomePageState extends State<HomePage> {
       final rows = await db
           .from('groups')
           .select('id, name')
-          .in_('id', groupIds)
+          .inFilter('id', groupIds)
           .order('name', ascending: true);
 
       final loaded = <Map<String, dynamic>>[];
