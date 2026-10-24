@@ -1,4 +1,4 @@
-name: kulcskod
+name: Bluchet
 description: Kulcskód secure messaging client scaffold
 publish_to: 'none'
 version: 0.1.0+1
@@ -17,3 +17,6 @@ dev_dependencies:
   flutter_lints: ^5.0.0
 flutter:
   uses-material-design: true
+flutter:
+  assets: 
+     - .env
