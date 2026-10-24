@@ -26,12 +26,7 @@ String _buildInternalEmail(String username) {
       .replaceAll(RegExp(r'[^a-z0-9]+'), '.');
 
   final label = safe.isEmpty ? 'user' : safe;
-
-  // Keep the generated auth email stable so repeated test registrations do not
-  // trigger Supabase's email-send rate limit. For this mock auth flow you also
-  // need to ensure email confirmation is disabled or the project is configured
-  // to allow the number of signup attempts you are making in testing.
-  return '$label@example.com';
+  return '$label@test.com';
 }
 
 Future<void> main() async {
