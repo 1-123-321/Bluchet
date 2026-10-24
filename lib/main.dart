@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -162,6 +161,533 @@ class _StartPageState extends State<StartPage> {
   }
 }
 
+class ProfilePage extends StatefulWidget {
+  const ProfilePage({super.key});
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
+class _ProfilePageState extends State<ProfilePage> {
+  final _formKey = GlobalKey<FormState>();
+  final _usernameController = TextEditingController();
+  bool _saving = false;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final user = db.auth.currentUser;
+      if (user == null) {
+        throw Exception('Nincs bejelentkezett felhasználó.');
+      }
+
+      final row = await db
+          .from('profiles')
+          .select('username')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (!mounted) return;
+
+      final username = row?['username']?.toString() ??
+          'felhasznalo_${user.id.substring(0, 8)}';
+      _usernameController.text = username;
+      setState(() {
+        _loading = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = _friendly(e);
+        });
+      }
+    }
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final user = db.auth.currentUser;
+    if (user == null) {
+      setState(() => _error = 'Nincs bejelentkezett felhasználó.');
+      return;
+    }
+
+    final username = _usernameController.text.trim();
+    final normalized = username.replaceAll(RegExp(r'\s+'), '_');
+
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+
+    try {
+      await db.from('profiles').upsert({
+        'id': user.id,
+        'username': normalized,
+      });
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A felhasználónév frissítve.')),
+      );
+      Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = _friendly(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Profil')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Felhasználónév',
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _usernameController,
+                      decoration: const InputDecoration(
+                        hintText: 'pl. jani_42',
+                        prefixIcon: Icon(Icons.person),
+                      ),
+                      validator: (value) {
+                        final text = (value ?? '').trim();
+                        if (text.isEmpty) {
+                          return 'Adj meg egy felhasználónevet.';
+                        }
+                        if (text.length < 3) {
+                          return 'Legalább 3 karakter hosszúnak kell lennie.';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    if (_error != null)
+                      SelectableText(
+                        _error!,
+                        style: const TextStyle(color: Colors.redAccent),
+                      ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _saving ? null : _save,
+                        icon: _saving
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.save),
+                        label: Text(_saving ? 'Mentés...' : 'Mentés'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+class EmailVerificationGate extends StatefulWidget {
+  final VoidCallback onVerified;
+
+  const EmailVerificationGate({
+    super.key,
+    required this.onVerified,
+  });
+
+  @override
+  State<EmailVerificationGate> createState() => _EmailVerificationGateState();
+}
+
+class _EmailVerificationGateState extends State<EmailVerificationGate> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _loading = false;
+  bool _sent = false;
+  String? _message;
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _checkCurrentUser() async {
+    try {
+      final user = db.auth.currentUser;
+      if (user != null && user.emailConfirmedAt != null) {
+        widget.onVerified();
+        return;
+      }
+
+      final result = await db.auth.getUser();
+      if (result.user != null && result.user!.emailConfirmedAt != null) {
+        widget.onVerified();
+      }
+    } catch (_) {
+      // A frissítés ellenőrzése sikertelen lehet, de a felhasználó továbbra is
+      // látni fogja a megerősítési felületet.
+    }
+  }
+
+  Future<void> _requestVerification() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
+      setState(() => _message = 'Adj meg e-mail címet és jelszót.');
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _message = null;
+    });
+
+    try {
+      final current = db.auth.currentUser;
+      if (current != null &&
+          current.appMetadata['provider'] == 'anonymous') {
+        await db.auth.signOut();
+      }
+
+      await db.auth.signUp(
+        email: email,
+        password: password,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _sent = true;
+        _message =
+            'Megerősítő email elküldve. Kattints a levélben található linkre, majd nyomd meg a “Frissítés” gombot.';
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _message = _friendly(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Card(
+              color: _panel,
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.verified_user,
+                      size: 52,
+                      color: _blue,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Email megerősítés szükséges',
+                      style:
+                          TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'A csoportok és a profil használata előtt igazolnod kell az email címedet.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+                    TextField(
+                      controller: _emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'E-mail',
+                        prefixIcon: Icon(Icons.email_outlined),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _passwordController,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Jelszó',
+                        prefixIcon: Icon(Icons.lock_outline),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: _loading ? null : _requestVerification,
+                      icon: _loading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.send),
+                      label: Text(_loading ? 'Küldés...' : 'Megerősítő email küldése'),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _checkCurrentUser,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Frissítés'),
+                    ),
+                    if (_message != null) ...[
+                      const SizedBox(height: 14),
+                      SelectableText(
+                        _message!,
+                        style: TextStyle(
+                          color: _sent ? Colors.lightGreen : Colors.orangeAccent,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class GroupCreatePage extends StatefulWidget {
+  const GroupCreatePage({super.key});
+
+  @override
+  State<GroupCreatePage> createState() => _GroupCreatePageState();
+}
+
+class _GroupCreatePageState extends State<GroupCreatePage> {
+  final _groupNameController = TextEditingController();
+  final Set<String> _selectedUserIds = {};
+  List<Map<String, dynamic>> _candidates = [];
+  bool _loading = true;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCandidates();
+  }
+
+  @override
+  void dispose() {
+    _groupNameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadCandidates() async {
+    try {
+      final me = db.auth.currentUser!.id;
+      final rows = await db
+          .from('profiles')
+          .select('id, username')
+          .neq('id', me)
+          .order('username', ascending: true);
+
+      if (!mounted) return;
+
+      setState(() {
+        _candidates = List<Map<String, dynamic>>.from(rows);
+        _loading = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = _friendly(e);
+        });
+      }
+    }
+  }
+
+  Future<void> _createGroup() async {
+    final groupName = _groupNameController.text.trim();
+    if (groupName.isEmpty) {
+      setState(() => _error = 'Adj meg egy csoportnevet.');
+      return;
+    }
+
+    final me = db.auth.currentUser?.id;
+    if (me == null) {
+      setState(() => _error = 'Nincs bejelentkezett felhasználó.');
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+
+    try {
+      final inserted = await db
+          .from('groups')
+          .insert({
+            'name': groupName,
+            'created_by': me,
+          })
+          .select();
+
+      final groupId = inserted.first['id']?.toString();
+      if (groupId == null || groupId.isEmpty) {
+        throw Exception('A csoport azonosítója nem érkezett vissza.');
+      }
+
+      final members = <Map<String, dynamic>>[
+        {'group_id': groupId, 'user_id': me},
+        ..._selectedUserIds.map((userId) => {
+          'group_id': groupId,
+          'user_id': userId,
+        }),
+      ];
+
+      await db.from('group_members').insert(members);
+
+      if (!mounted) return;
+
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = _friendly(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Csoport létrehozása')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: _groupNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Csoport neve',
+                      prefixIcon: Icon(Icons.group),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Tagok kiválasztása',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: _candidates.isEmpty
+                        ? const Center(child: Text('Nincs más felhasználó.'))
+                        : ListView(
+                            children: _candidates.map((profile) {
+                              final userId = profile['id']?.toString() ?? '';
+                              final username =
+                                  profile['username']?.toString() ?? 'Felhasználó';
+
+                              return CheckboxListTile(
+                                value: _selectedUserIds.contains(userId),
+                                title: Text(username),
+                                onChanged: (selected) {
+                                  setState(() {
+                                    if (selected == true) {
+                                      _selectedUserIds.add(userId);
+                                    } else {
+                                      _selectedUserIds.remove(userId);
+                                    }
+                                  });
+                                },
+                              );
+                            }).toList(),
+                          ),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      _error!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: _saving ? null : _createGroup,
+                    icon: _saving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.check),
+                    label: Text(_saving ? 'Létrehozás...' : 'Csoport létrehozása'),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -173,14 +699,22 @@ class _HomePageState extends State<HomePage> {
   final searchController = TextEditingController();
   List<Map<String, dynamic>> results = [];
   List<Map<String, dynamic>> chats = [];
+  List<Map<String, dynamic>> groups = [];
   bool searching = false;
   bool loadingChats = true;
+  bool loadingGroups = true;
   String? error;
+
+  bool get hasVerifiedEmail {
+    final user = db.auth.currentUser;
+    return user != null && user.emailConfirmedAt != null;
+  }
 
   @override
   void initState() {
     super.initState();
     loadChats();
+    loadGroups();
   }
 
   @override
@@ -285,6 +819,64 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> loadGroups() async {
+    setState(() => loadingGroups = true);
+
+    try {
+      final me = db.auth.currentUser!.id;
+      final memberships = await db
+          .from('group_members')
+          .select('group_id')
+          .eq('user_id', me);
+
+      if (memberships.isEmpty) {
+        if (mounted) {
+          setState(() {
+            groups = [];
+            error = null;
+          });
+        }
+        return;
+      }
+
+      final groupIds = memberships
+          .map((e) => e['group_id'].toString())
+          .toList(growable: false);
+
+      final rows = await db
+          .from('groups')
+          .select('id, name')
+          .in_('id', groupIds)
+          .order('name', ascending: true);
+
+      final loaded = <Map<String, dynamic>>[];
+      for (final row in rows) {
+        final groupId = row['id'].toString();
+        final members = await db
+            .from('group_members')
+            .select('user_id')
+            .eq('group_id', groupId);
+
+        loaded.add({
+          'id': groupId,
+          'name': row['name']?.toString() ?? 'Csoport',
+          'member_count': members.length,
+        });
+      }
+
+      if (mounted) {
+        setState(() {
+          groups = loaded;
+          error = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => error = _friendly(e));
+    } finally {
+      if (mounted) setState(() => loadingGroups = false);
+    }
+  }
+
   Future<void> openChat(Map<String, dynamic> profile) async {
     try {
       final response = await db.rpc(
@@ -326,21 +918,48 @@ class _HomePageState extends State<HomePage> {
   Future<void> signOut() async {
     try {
       await db.auth.signOut();
-      await db.auth.signInAnonymously();
       if (mounted) {
         setState(() {
           chats = [];
           results = [];
+          groups = [];
         });
-        await loadChats();
       }
     } catch (e) {
       if (mounted) setState(() => error = _friendly(e));
     }
   }
 
+  Future<void> _openProfile() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ProfilePage()),
+    );
+  }
+
+  Future<void> _openGroupCreator() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const GroupCreatePage()),
+    );
+
+    if (result == true) {
+      await loadGroups();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (!hasVerifiedEmail) {
+      return EmailVerificationGate(
+        onVerified: () {
+          if (mounted) {
+            setState(() {});
+          }
+        },
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -349,12 +968,25 @@ class _HomePageState extends State<HomePage> {
         ),
         actions: [
           IconButton(
+            tooltip: 'Profil',
+            onPressed: _openProfile,
+            icon: const Icon(Icons.person_outline),
+          ),
+          IconButton(
+            tooltip: 'Csoport létrehozása',
+            onPressed: _openGroupCreator,
+            icon: const Icon(Icons.group_add),
+          ),
+          IconButton(
             tooltip: 'Frissítés',
-            onPressed: loadChats,
+            onPressed: () async {
+              await loadChats();
+              await loadGroups();
+            },
             icon: const Icon(Icons.refresh),
           ),
           IconButton(
-            tooltip: 'Új névtelen munkamenet',
+            tooltip: 'Kijelentkezés',
             onPressed: signOut,
             icon: const Icon(Icons.logout),
           ),
@@ -412,6 +1044,42 @@ class _HomePageState extends State<HomePage> {
               style: const TextStyle(color: Colors.redAccent),
             ),
           ],
+          const SizedBox(height: 24),
+          const Text(
+            'Csoportjaim',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          if (loadingGroups)
+            const Center(child: CircularProgressIndicator())
+          else if (groups.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18),
+              child: Text('Még nincs csoportod. Hozz létre egyet!'),
+            )
+          else
+            for (final group in groups)
+              Card(
+                color: _panel,
+                child: ListTile(
+                  leading: const CircleAvatar(
+                    backgroundColor: _blue,
+                    child: Icon(Icons.group, color: Colors.white),
+                  ),
+                  title: Text(group['name'].toString()),
+                  subtitle: Text(
+                    '${group['member_count']} tag',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Csoport: ${group['name']}'),
+                      ),
+                    );
+                  },
+                ),
+              ),
           const SizedBox(height: 24),
           const Text(
             'Beszélgetéseid',
@@ -571,7 +1239,6 @@ class _ChatPageState extends State<ChatPage> {
       await db.from('messages').insert({
         'conversation_id': widget.conversationId,
         'sender_id': user.id,
-        // Prototípus: itt a szöveg olvasható formában kerül tárolásra.
         'ciphertext': text,
         'client_message_id': _uuid.v4(),
       });
@@ -703,6 +1370,775 @@ String _friendly(Object error) {
     return 'Hiányzik vagy nem megfelelő a beszélgetést létrehozó '
         'get_or_create_direct_conversation RPC.';
   }
+  if (text.contains('groups') || text.contains('group_members')) {
+    return 'A csoportokra vonatkozó tábla vagy mező hiányzik a Supabase adatbázisból. '
+        'Hozd létre a public.groups és public.group_members táblákat.';
+  }
   return text;
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
