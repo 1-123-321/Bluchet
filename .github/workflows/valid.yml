@@ -1,0 +1,66 @@
+name: Validate Supabase URL
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate-config:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate SUPABASE_URL
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Checking SUPABASE_URL..."
+
+          if [ -z "${SUPABASE_URL:-}" ]; then
+            echo "::error::SUPABASE_URL is missing."
+            exit 1
+          fi
+
+          # Kényszerített formátum ellenőrzés:
+          # pl. https://xyz123.supabase.co
+          if ! [[ "${SUPABASE_URL}" =~ ^https://[A-Za-z0-9-]+\.supabase\.co$ ]]; then
+            echo "::error::SUPABASE_URL is invalid."
+            echo "Expected format: https://<project-name>.supabase.co"
+            echo "Received: ${SUPABASE_URL}"
+            exit 1
+          fi
+
+          # Optional: URL parse check
+          python - <<'PY'
+          import os, sys
+          from urllib.parse import urlparse
+
+          url = os.environ["SUPABASE_URL"]
+          p = urlparse(url)
+
+          if p.scheme != "https":
+              print(f"::error::Invalid scheme in SUPABASE_URL: {url}")
+              sys.exit(1)
+
+          if not p.netloc.endswith(".supabase.co"):
+              print(f"::error::Invalid Supabase host in SUPABASE_URL: {url}")
+              sys.exit(1)
+
+          if not p.netloc.split(".")[0]:
+              print(f"::error::Missing project name in SUPABASE_URL: {url}")
+              sys.exit(1)
+
+          print(f"Valid Supabase URL: {url}")
+          PY
+
+      - name: Build / test
+        run: |
+          echo "URL valid, workflow can continue..."
+          # ide jön a tényleges build/test parancs
+          # npm ci
+          # npm run build
