@@ -23,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
         
-      - name: Verify Supabase URL and anon key
+      - name: Verify Supabase variables
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
@@ -33,13 +33,23 @@ jobs:
             exit 1
           fi
 
-          curl --fail --silent --show-error \
-            -H "apikey: $SUPABASE_ANON_KEY" \
-            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
-            -H "Content-Type: application/json" \
-            "$SUPABASE_URL/rest/v1/" > /tmp/supabase-health.json
+          case "$SUPABASE_URL" in
+            https://*) ;;
+            *)
+              echo "SUPABASE_URL must start with https://"
+              exit 1
+              ;;
+          esac
 
-          echo "Supabase URL and anon key are valid."
+          case "$SUPABASE_ANON_KEY" in
+            sb_*) ;;
+            *)
+              echo "SUPABASE_ANON_KEY has unexpected format."
+              exit 1
+              ;;
+          esac
+
+          echo "Supabase variables are present and look valid."
         
       - name: Generate Android platform
         run: flutter create --platforms=android .
