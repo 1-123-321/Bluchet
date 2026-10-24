@@ -20,13 +20,13 @@ String _normalizeUsername(String value) {
 }
 
 String _buildInternalEmail(String username) {
-  final cleaned = username
+  final safe = username
       .trim()
       .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]'), '_');
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '.');
 
-  final safe = cleaned.isEmpty ? 'user' : cleaned;
-  return '${safe}_${DateTime.now().millisecondsSinceEpoch}@internal.local';
+  final label = safe.isEmpty ? 'user' : safe;
+  return '$label-${DateTime.now().millisecondsSinceEpoch}@example.com';
 }
 
 Future<void> main() async {
@@ -1012,64 +1012,59 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _loadProfile() async {
+    setState(() => _loading = true);
+
     try {
-      final user = db.auth.currentUser;
-      if (user == null) {
-        throw Exception('Nincs bejelentkezett felhasználó.');
+      final me = db.auth.currentUser;
+      if (me == null) {
+        return;
       }
 
-      final row = await db
+      final profile = await db
           .from('profiles')
           .select('username')
-          .eq('id', user.id)
+          .eq('id', me.id)
           .maybeSingle();
 
-      if (!mounted) return;
-
-      final username = row?['username']?.toString() ?? 'felhasznalo';
-
-      _usernameController.text = username;
-      setState(() {
-        _loading = false;
-        _error = null;
-      });
+      if (profile != null) {
+        _usernameController.text = profile['username']?.toString() ?? '';
+      }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = _friendly(e);
-        });
+        setState(() => _error = _friendly(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
       }
     }
   }
 
   Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    final user = db.auth.currentUser;
-    if (user == null) {
-      setState(() => _error = 'Nincs bejelentkezett felhasználó.');
+    if (!_formKey.currentState!.validate()) {
       return;
     }
 
-    final username = _normalizeUsername(_usernameController.text);
-
-    setState(() {
-      _saving = true;
-      _error = null;
-    });
+    setState(() => _saving = true);
 
     try {
+      final me = db.auth.currentUser;
+      if (me == null) {
+        throw Exception('Nincs bejelentkezett felhasználó.');
+      }
+
+      final username = _normalizeUsername(_usernameController.text);
+      if (username.length < 3) {
+        throw Exception('A felhasználónévnek legalább 3 karakter hosszúnak kell lennie.');
+      }
+
       await db.from('profiles').upsert({
-        'id': user.id,
+        'id': me.id,
         'username': username,
       });
 
       if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('A profil frissítve.')),
-      );
+      Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
         setState(() => _error = _friendly(e));
@@ -1090,16 +1085,7 @@ class _ProfilePageState extends State<ProfilePage> {
         child: Form(
           key: _formKey,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    _error!,
-                    style: const TextStyle(color: Colors.redAccent),
-                  ),
-                ),
               TextFormField(
                 controller: _usernameController,
                 enabled: !_loading,
@@ -1109,15 +1095,24 @@ class _ProfilePageState extends State<ProfilePage> {
                 ),
                 validator: (value) {
                   final text = (value ?? '').trim();
-                  if (text.isEmpty) return 'Adj meg felhasználónevet.';
+                  if (text.isEmpty) return 'Adj meg egy felhasználónevet.';
                   if (text.length < 3) return 'Legalább 3 karakter.';
                   return null;
                 },
               ),
               const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: _saving || _loading ? null : _save,
-                child: Text(_saving ? 'Mentés...' : 'Mentés'),
+              if (_error != null)
+                Text(
+                  _error!,
+                  style: const TextStyle(color: Colors.redAccent),
+                ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _saving ? null : _save,
+                  child: Text(_saving ? 'Mentés...' : 'Mentés'),
+                ),
               ),
             ],
           ),
