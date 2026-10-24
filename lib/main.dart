@@ -14,13 +14,18 @@ String _friendly(Object error) {
       : text;
 }
 
+String _normalizeUsername(String value) {
+  final cleaned = value.trim().replaceAll(RegExp(r'\s+'), '_');
+  return cleaned;
+}
+
 String _buildInternalEmail(String username) {
-  final clean = username
+  final cleaned = username
       .trim()
       .toLowerCase()
       .replaceAll(RegExp(r'[^a-z0-9]'), '_');
 
-  final safe = clean.isEmpty ? 'user' : clean;
+  final safe = cleaned.isEmpty ? 'user' : cleaned;
   return '${safe}_${DateTime.now().millisecondsSinceEpoch}@internal.local';
 }
 
@@ -139,7 +144,7 @@ class _StartPageState extends State<StartPage> {
   }
 
   Future<void> _login() async {
-    final username = _loginUsernameController.text.trim();
+    final username = _normalizeUsername(_loginUsernameController.text);
     final password = _loginPasswordController.text.trim();
 
     if (username.isEmpty || password.isEmpty) {
@@ -191,7 +196,7 @@ class _StartPageState extends State<StartPage> {
   }
 
   Future<void> _register() async {
-    final username = _registerUsernameController.text.trim();
+    final username = _normalizeUsername(_registerUsernameController.text);
     final password = _registerPasswordController.text.trim();
 
     if (username.isEmpty || password.isEmpty) {
@@ -199,8 +204,7 @@ class _StartPageState extends State<StartPage> {
       return;
     }
 
-    final normalizedUsername = username.replaceAll(RegExp(r'\s+'), '_');
-    if (normalizedUsername.length < 3) {
+    if (username.length < 3) {
       setState(() => _error = 'A felhasználónévnek legalább 3 karakter hosszúnak kell lennie.');
       return;
     }
@@ -216,7 +220,17 @@ class _StartPageState extends State<StartPage> {
     });
 
     try {
-      final hiddenEmail = _buildInternalEmail(normalizedUsername);
+      final existing = await db
+          .from('profiles')
+          .select('id')
+          .eq('username', username)
+          .maybeSingle();
+
+      if (existing != null) {
+        throw Exception('Ez a felhasználónév már foglalt.');
+      }
+
+      final hiddenEmail = _buildInternalEmail(username);
 
       final authResponse = await db.auth.signUp(
         email: hiddenEmail,
@@ -230,7 +244,7 @@ class _StartPageState extends State<StartPage> {
 
       await db.from('profiles').upsert({
         'id': userId,
-        'username': normalizedUsername,
+        'username': username,
         'email': hiddenEmail,
         'email_verified': true,
       });
@@ -396,6 +410,11 @@ class _HomePageState extends State<HomePage> {
   bool loadingChats = true;
   bool loadingGroups = true;
   String? error;
+
+  bool get hasVerifiedEmail {
+    final user = db.auth.currentUser;
+    return user != null && user.emailConfirmedAt != null;
+  }
 
   @override
   void initState() {
@@ -664,6 +683,16 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    if (!hasVerifiedEmail) {
+      return EmailVerificationGate(
+        onVerified: () {
+          if (mounted) {
+            setState(() {});
+          }
+        },
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -918,6 +947,47 @@ class _GroupCreatePageState extends State<GroupCreatePage> {
   }
 }
 
+class EmailVerificationGate extends StatelessWidget {
+  final VoidCallback onVerified;
+
+  const EmailVerificationGate({
+    super.key,
+    required this.onVerified,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.verified_user, size: 64),
+              const SizedBox(height: 16),
+              const Text(
+                'E-mail ellenőrzés szükséges',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Az alkalmazás használatához ellenőrizned kell az e-mail címed.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: onVerified,
+                child: const Text('Frissítés'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
 
@@ -986,8 +1056,7 @@ class _ProfilePageState extends State<ProfilePage> {
       return;
     }
 
-    final username = _usernameController.text.trim();
-    final normalized = username.replaceAll(RegExp(r'\s+'), '_');
+    final username = _normalizeUsername(_usernameController.text);
 
     setState(() {
       _saving = true;
@@ -997,7 +1066,7 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       await db.from('profiles').upsert({
         'id': user.id,
-        'username': normalized,
+        'username': username,
       });
 
       if (!mounted) return;
@@ -1045,7 +1114,7 @@ class _ProfilePageState extends State<ProfilePage> {
                         prefixIcon: Icon(Icons.person),
                       ),
                       validator: (value) {
-                        final text = (value ?? '').trim();
+                        final text = _normalizeUsername(value ?? '');
                         if (text.isEmpty) {
                           return 'Adj meg egy felhasználónevet.';
                         }
