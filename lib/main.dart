@@ -1,13 +1,15 @@
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
-const _navy = Color(0xFF071526);
-const _panel = Color(0xFF10263D);
-const _blue = Color(0xFF278BFF);
-const _cyan = Color(0xFF35D5D0);
-bool _backendConfigured = false;
+const _background = Color(0xFF0B1020);
+const _panel = Color(0xFF171F33);
+const _blue = Color(0xFF4F8CFF);
+
+final _uuid = const Uuid();
+
+SupabaseClient get db => Supabase.instance.client;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,646 +17,692 @@ Future<void> main() async {
   const url = String.fromEnvironment('SUPABASE_URL');
   const key = String.fromEnvironment('SUPABASE_ANON_KEY');
 
-  if (url.isNotEmpty && key.isNotEmpty) {
-    await Supabase.initialize(url: url, anonKey: key);
-    _backendConfigured = true;
+  if (url.isEmpty || key.isEmpty) {
+    runApp(const KulcskodApp(configured: false));
+    return;
   }
 
-  runApp(const KulcskodApp());
+  try {
+    await Supabase.initialize(url: url, anonKey: key);
+    runApp(const KulcskodApp(configured: true));
+  } catch (e) {
+    runApp(KulcskodApp(startupError: e.toString()));
+  }
 }
-
-SupabaseClient get supa => Supabase.instance.client;
 
 class KulcskodApp extends StatelessWidget {
-  const KulcskodApp({super.key});
+  final bool configured;
+  final String? startupError;
+
+  const KulcskodApp({
+    super.key,
+    this.configured = true,
+    this.startupError,
+  });
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-        title: 'Kulcskód',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          useMaterial3: true,
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Kulcskód',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: _background,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: _blue,
           brightness: Brightness.dark,
-          scaffoldBackgroundColor: _navy,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: _blue,
-            brightness: Brightness.dark,
-          ),
-          inputDecorationTheme: InputDecorationTheme(
-            filled: true,
-            fillColor: _panel,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: BorderSide.none,
-            ),
-          ),
-          appBarTheme: const AppBarTheme(
-            backgroundColor: _navy,
-            foregroundColor: Colors.white,
+        ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: _background,
+          foregroundColor: Colors.white,
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: _panel,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide.none,
           ),
         ),
-        home: _backendConfigured ? const AuthGate() : const SetupRequired(),
-      );
+      ),
+      home: startupError != null
+          ? ErrorPage(message: 'Indítási hiba:\n$startupError')
+          : !configured
+              ? const ErrorPage(
+                  message:
+                      'Hiányzik a Supabase URL vagy az anon kulcs. '
+                      'Ellenőrizd a GitHub Actions buildbeállításait.',
+                )
+              : const StartPage(),
+    );
+  }
 }
 
-class SetupRequired extends StatelessWidget {
-  const SetupRequired({super.key});
+class ErrorPage extends StatelessWidget {
+  final String message;
+
+  const ErrorPage({super.key, required this.message});
 
   @override
-  Widget build(BuildContext context) => const Scaffold(
-        body: Center(
-          child: Padding(
-            padding: EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.key_rounded, size: 64, color: _cyan),
-                SizedBox(height: 16),
-                Text(
-                  'Kulcskód',
-                  style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
-                ),
-                SizedBox(height: 12),
-                Text(
-                  'A backend még nincs konfigurálva. Állítsd be a Supabase URL-t és a publikus klienskulcsot a README szerint; az alkalmazás nem színlel működő kapcsolatot.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white70),
-                ),
-              ],
-            ),
-          ),
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: SelectableText(message),
         ),
-      );
+      ),
+    );
+  }
 }
 
-class AuthGate extends StatelessWidget {
-  const AuthGate({super.key});
+class StartPage extends StatefulWidget {
+  const StartPage({super.key});
 
   @override
-  Widget build(BuildContext context) => StreamBuilder<AuthState>(
-        stream: supa.auth.onAuthStateChange,
-        builder: (context, _) =>
-            supa.auth.currentUser == null ? const AuthScreen() : const HomeScreen(),
-      );
+  State<StartPage> createState() => _StartPageState();
 }
 
-class AuthScreen extends StatefulWidget {
-  const AuthScreen({super.key});
-
-  @override
-  State<AuthScreen> createState() => _AuthScreenState();
-}
-
-class _AuthScreenState extends State<AuthScreen> {
-  final email = TextEditingController();
-  final password = TextEditingController();
-  final username = TextEditingController();
-
-  bool register = false;
-  bool busy = false;
+class _StartPageState extends State<StartPage> {
   String? error;
-  String? notice;
+  bool loading = true;
 
   @override
-  void dispose() {
-    email.dispose();
-    password.dispose();
-    username.dispose();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _start();
   }
 
-  Future<void> submit() async {
-    setState(() {
-      busy = true;
-      error = null;
-      notice = null;
-    });
-
+  Future<void> _start() async {
     try {
-      if (register) {
-        final name = username.text.trim().toLowerCase();
-        if (!RegExp(r'^[a-z0-9_]{3,24}$').hasMatch(name)) {
-          throw const FormatException(
-            'A felhasználónév 3–24 karakter, csak a–z, 0–9 és _ lehet.',
-          );
-        }
-
-        final res = await supa.auth.signUp(
-          email: email.text.trim(),
-          password: password.text,
-          data: {'username': name},
-        );
-
-        if (res.user != null && res.session == null) {
-          notice = 'Ellenőrizd az e-mail-fiókodat a megerősítéshez.';
-        }
-      } else {
-        await supa.auth.signInWithPassword(
-          email: email.text.trim(),
-          password: password.text,
-        );
+      if (db.auth.currentUser == null) {
+        await db.auth.signInAnonymously();
       }
-    } on FormatException catch (e) {
-      error = e.message;
+
+      final user = db.auth.currentUser!;
+      final existing = await db
+          .from('profiles')
+          .select('id')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (existing == null) {
+        final username = 'felhasznalo_${user.id.substring(0, 8)}';
+        await db.from('profiles').upsert({
+          'id': user.id,
+          'username': username,
+        });
+      }
     } catch (e) {
       error = _friendly(e);
     }
 
     if (mounted) {
-      setState(() => busy = false);
-    }
-  }
-
-  Future<void> resetPassword() async {
-    try {
-      await supa.auth.resetPasswordForEmail(email.text.trim());
-      setState(() => notice = 'Ha a cím regisztrálva van, érkezik visszaállító e-mail.');
-    } catch (e) {
-      setState(() => error = _friendly(e));
+      setState(() => loading = false);
     }
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        body: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 420),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.key_rounded, color: _cyan, size: 64),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Kulcskód',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      register
-                          ? 'Hozz létre fiókot'
-                          : 'Jelentkezz be biztonságosan',
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                    const SizedBox(height: 28),
-                    if (register) ...[
-                      TextField(
-                        controller: username,
-                        autocorrect: false,
-                        decoration: const InputDecoration(
-                          labelText: 'Felhasználónév',
-                          prefixIcon: Icon(Icons.alternate_email),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
-                    TextField(
-                      controller: email,
-                      keyboardType: TextInputType.emailAddress,
-                      autocorrect: false,
-                      decoration: const InputDecoration(
-                        labelText: 'E-mail-cím',
-                        prefixIcon: Icon(Icons.mail_outline),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: password,
-                      obscureText: true,
-                      decoration: InputDecoration(
-                        labelText: 'Jelszó',
-                        prefixIcon: const Icon(Icons.lock_outline),
-                        helperText: register
-                            ? 'Legalább 8 karaktert használj.'
-                            : 'A jelszavad bizalmas és titkos.',
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    if (error != null)
-                      Text(
-                        error!,
-                        style: const TextStyle(color: Colors.redAccent),
-                      ),
-                    if (notice != null)
-                      Text(
-                        notice!,
-                        style: const TextStyle(color: _cyan),
-                      ),
-                    const SizedBox(height: 16),
-                    FilledButton(
-                      onPressed: busy ? null : submit,
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Text(
-                          busy
-                              ? 'Folyamatban…'
-                              : register
-                                  ? 'Regisztráció'
-                                  : 'Bejelentkezés',
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: () => setState(() {
-                        register = !register;
-                        error = null;
-                        notice = null;
-                      }),
-                      child: Text(
-                        register
-                            ? 'Már van fiókod? Bejelentkezés'
-                            : 'Új vagy itt? Regisztráció',
-                      ),
-                    ),
-                    if (!register)
-                      TextButton(
-                        onPressed: resetPassword,
-                        child: const Text('Elfelejtett jelszó'),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
+  Widget build(BuildContext context) {
+    if (loading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
       );
-}
-
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
-
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen> {
-  int tab = 0;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(
-          title: const Row(
-            children: [
-              Icon(Icons.key_rounded, color: _cyan),
-              SizedBox(width: 8),
-              Text('Kulcskód'),
-            ],
-          ),
-          actions: const [
-            IconButton(icon: Icon(Icons.logout), onPressed: null),
-          ],
-        ),
-        body: IndexedStack(
-          index: tab,
-          children: const [
-            ConversationList(),
-            SearchUsers(),
-            ProfileScreen(),
-          ],
-        ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: tab,
-          onDestinationSelected: (v) => setState(() => tab = v),
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.chat_bubble_outline),
-              label: 'Beszélgetések',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.search),
-              label: 'Keresés',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.person_outline),
-              label: 'Profil',
-            ),
-          ],
-        ),
-      );
-}
-
-class ConversationList extends StatefulWidget {
-  const ConversationList({super.key});
-
-  @override
-  State<ConversationList> createState() => _ConversationListState();
-}
-
-class _ConversationListState extends State<ConversationList> {
-  Future<List<Map<String, dynamic>>> load() async {
-    final rows = await supa
-        .from('conversation_participants')
-        .select('conversation_id, conversations(id, updated_at)')
-        .eq('user_id', supa.auth.currentUser!.id)
-        .order('created_at');
-
-    final result = <Map<String, dynamic>>[];
-
-    for (final row in rows) {
-      final conv = row['conversations'];
-      if (conv == null) continue;
-
-      final others = await supa
-          .from('conversation_participants')
-          .select('user_id, profiles(username)')
-          .eq('conversation_id', conv['id'])
-          .neq('user_id', supa.auth.currentUser!.id);
-
-      final user = others.isEmpty
-          ? 'Beszélgetés'
-          : (others.first['profiles']?['username'] ?? 'Felhasználó').toString();
-
-      final messages = await supa
-          .from('messages')
-          .select('created_at')
-          .eq('conversation_id', conv['id'])
-          .order('created_at', ascending: false)
-          .limit(1);
-
-      result.add({
-        'id': conv['id'],
-        'username': user,
-        'updated_at': messages.isNotEmpty
-            ? messages.first['created_at']
-            : conv['updated_at'],
-      });
     }
 
-    result.sort((a, b) => (b['updated_at'] ?? '').toString().compareTo(
-          (a['updated_at'] ?? '').toString(),
-        ));
-
-    return result;
-  }
-
-  @override
-  Widget build(BuildContext context) => FutureBuilder<List<Map<String, dynamic>>>(
-        future: load(),
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError) {
-            return Center(
-              child: Text('Nem sikerült betölteni: ${_friendly(snap.error!)}'),
-            );
-          }
-
-          final items = snap.data ?? [];
-          if (items.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(30),
-                child: Text(
-                  'Még nincs beszélgetésed. Keress felhasználókat a Keresés lapon.',
-                ),
-              ),
-            );
-          }
-
-          return RefreshIndicator(
-            onRefresh: () async => setState(() {}),
-            child: ListView.separated(
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const Divider(height: 1, indent: 76),
-              itemBuilder: (context, index) {
-                final item = items[index];
-                final date = item['updated_at'] != null
-                    ? DateFormat('yyyy. MM. dd. HH:mm').format(
-                        DateTime.parse(item['updated_at'].toString()),
-                      )
-                    : 'Most';
-
-                return ListTile(
-                  leading: const CircleAvatar(
-                    child: Icon(Icons.person_outline),
-                  ),
-                  title: Text(item['username'].toString()),
-                  subtitle: Text(date),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ChatScreen(
-                          conversationId: item['id'].toString(),
-                          username: item['username'].toString(),
-                        ),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          );
-        },
+    if (error != null) {
+      return ErrorPage(
+        message:
+            'Nem sikerült elindítani az alkalmazást.\n\n$error\n\n'
+            'Ellenőrizd a Supabase táblákat és az RLS-szabályokat.',
       );
+    }
+
+    return const HomePage();
+  }
 }
 
-class SearchUsers extends StatefulWidget {
-  const SearchUsers({super.key});
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
 
   @override
-  State<SearchUsers> createState() => _SearchUsersState();
+  State<HomePage> createState() => _HomePageState();
 }
 
-class _SearchUsersState extends State<SearchUsers> {
-  final query = TextEditingController();
-  bool busy = false;
-  String? error;
+class _HomePageState extends State<HomePage> {
+  final searchController = TextEditingController();
   List<Map<String, dynamic>> results = [];
+  List<Map<String, dynamic>> chats = [];
+  bool searching = false;
+  bool loadingChats = true;
+  String? error;
 
-  Future<void> search() async {
+  @override
+  void initState() {
+    super.initState();
+    loadChats();
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> searchUsers() async {
+    final query = searchController.text.trim();
+    if (query.isEmpty) return;
+
     setState(() {
-      busy = true;
+      searching = true;
       error = null;
+      results = [];
     });
 
     try {
-      final q = query.text.trim().toLowerCase();
-      if (q.length < 2) {
-        throw const FormatException('Legalább 2 karaktert írj be.');
-      }
-
-      final rows = await supa
+      final me = db.auth.currentUser!.id;
+      final rows = await db
           .from('profiles')
           .select('id, username')
-          .ilike('username', '%$q%')
-          .limit(20);
+          .ilike('username', '%$query%')
+          .neq('id', me)
+          .limit(30);
 
-      setState(() => results = List<Map<String, dynamic>>.from(rows));
-    } on FormatException catch (e) {
-      setState(() => error = e.message);
-    } catch (e) {
-      setState(() => error = _friendly(e));
-    } finally {
       if (mounted) {
-        setState(() => busy = false);
+        setState(() {
+          results = List<Map<String, dynamic>>.from(rows);
+        });
       }
+    } catch (e) {
+      if (mounted) setState(() => error = _friendly(e));
+    } finally {
+      if (mounted) setState(() => searching = false);
     }
   }
 
-  Future<void> openUser(Map<String, dynamic> user) async {
+  Future<void> loadChats() async {
+    setState(() => loadingChats = true);
+
     try {
-      final id = await supa.rpc(
+      final me = db.auth.currentUser!.id;
+      final memberships = await db
+          .from('conversation_participants')
+          .select('conversation_id')
+          .eq('user_id', me);
+
+      final loaded = <Map<String, dynamic>>[];
+
+      for (final membership in memberships) {
+        final conversationId = membership['conversation_id'].toString();
+
+        final people = await db
+            .from('conversation_participants')
+            .select('user_id')
+            .eq('conversation_id', conversationId);
+
+        String title = 'Beszélgetés';
+        for (final person in people) {
+          final id = person['user_id'].toString();
+          if (id == me) continue;
+
+          final profile = await db
+              .from('profiles')
+              .select('username')
+              .eq('id', id)
+              .maybeSingle();
+
+          if (profile != null) {
+            title = profile['username']?.toString() ?? title;
+          }
+        }
+
+        final latest = await db
+            .from('messages')
+            .select('ciphertext, created_at')
+            .eq('conversation_id', conversationId)
+            .order('created_at', ascending: false)
+            .limit(1);
+
+        loaded.add({
+          'id': conversationId,
+          'title': title,
+          'last': latest.isEmpty
+              ? 'Még nincs üzenet'
+              : latest.first['ciphertext']?.toString() ?? '',
+        });
+      }
+
+      if (mounted) {
+        setState(() {
+          chats = loaded;
+          error = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => error = _friendly(e));
+    } finally {
+      if (mounted) setState(() => loadingChats = false);
+    }
+  }
+
+  Future<void> openChat(Map<String, dynamic> profile) async {
+    try {
+      final response = await db.rpc(
         'get_or_create_direct_conversation',
-        params: {'other_user': user['id']},
+        params: {'other_user': profile['id']},
       );
+
+      final conversationId = response is Map
+          ? response['id']?.toString() ??
+              response['conversation_id']?.toString()
+          : response.toString();
+
+      if (conversationId == null ||
+          conversationId.isEmpty ||
+          conversationId == 'null') {
+        throw Exception('A beszélgetés azonosítója nem érkezett meg.');
+      }
 
       if (!mounted) return;
 
-      Navigator.push(
+      await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => ChatScreen(
-            conversationId: id.toString(),
-            username: user['username'].toString(),
+          builder: (_) => ChatPage(
+            conversationId: conversationId,
+            title: profile['username']?.toString() ?? 'Beszélgetés',
           ),
         ),
       );
+
+      await loadChats();
     } catch (e) {
-      if (!mounted) return;
-      setState(() => error = _friendly(e));
+      if (mounted) {
+        setState(() => error = _friendly(e));
+      }
+    }
+  }
+
+  Future<void> signOut() async {
+    try {
+      await db.auth.signOut();
+      await db.auth.signInAnonymously();
+      if (mounted) {
+        setState(() {
+          chats = [];
+          results = [];
+        });
+        await loadChats();
+      }
+    } catch (e) {
+      if (mounted) setState(() => error = _friendly(e));
     }
   }
 
   @override
-  Widget build(BuildContext context) => Padding(
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Kulcskód',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Frissítés',
+            onPressed: loadChats,
+            icon: const Icon(Icons.refresh),
+          ),
+          IconButton(
+            tooltip: 'Új névtelen munkamenet',
+            onPressed: signOut,
+            icon: const Icon(Icons.logout),
+          ),
+        ],
+      ),
+      body: ListView(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: query,
-                    onSubmitted: (_) => search(),
-                    decoration: const InputDecoration(
-                      labelText: 'Felhasználó keresése',
-                      prefixIcon: Icon(Icons.search),
-                    ),
+        children: [
+          const Text(
+            'Felhasználó keresése',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: searchController,
+                  onSubmitted: (_) => searchUsers(),
+                  decoration: const InputDecoration(
+                    hintText: 'Felhasználónév',
+                    prefixIcon: Icon(Icons.search),
                   ),
                 ),
-                const SizedBox(width: 12),
-                FilledButton(
-                  onPressed: busy ? null : search,
-                  child: const Text('Keresés'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            if (error != null)
-              Text(
-                error!,
-                style: const TextStyle(color: Colors.redAccent),
               ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                onPressed: searching ? null : searchUsers,
+                icon: const Icon(Icons.search),
+              ),
+            ],
+          ),
+          if (searching)
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          for (final profile in results)
+            Card(
+              color: _panel,
+              child: ListTile(
+                leading: const CircleAvatar(
+                  child: Icon(Icons.person),
+                ),
+                title: Text(profile['username']?.toString() ?? 'Felhasználó'),
+                subtitle: const Text('Beszélgetés megnyitása'),
+                trailing: const Icon(Icons.chat_bubble_outline),
+                onTap: () => openChat(profile),
+              ),
+            ),
+          if (error != null) ...[
             const SizedBox(height: 8),
-            Expanded(
-              child: results.isEmpty
-                  ? const Center(
-                      child: Text('Nincs találat. Próbáld meg a felhasználónevet.'),
-                    )
-                  : ListView.separated(
-                      itemCount: results.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, index) {
-                        final user = results[index];
-                        return ListTile(
-                          leading: const CircleAvatar(
-                            child: Icon(Icons.person_outline),
-                          ),
-                          title: Text(user['username'].toString()),
-                          onTap: () => openUser(user),
-                        );
-                      },
-                    ),
+            SelectableText(
+              error!,
+              style: const TextStyle(color: Colors.redAccent),
             ),
           ],
-        ),
-      );
+          const SizedBox(height: 24),
+          const Text(
+            'Beszélgetéseid',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          if (loadingChats)
+            const Center(child: CircularProgressIndicator())
+          else if (chats.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18),
+              child: Text(
+                'Még nincs beszélgetésed. Keress rá valakire fent!',
+              ),
+            )
+          else
+            for (final chat in chats)
+              Card(
+                color: _panel,
+                child: ListTile(
+                  leading: const CircleAvatar(
+                    backgroundColor: _blue,
+                    child: Icon(Icons.person, color: Colors.white),
+                  ),
+                  title: Text(chat['title'].toString()),
+                  subtitle: Text(
+                    chat['last'].toString(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ChatPage(
+                          conversationId: chat['id'].toString(),
+                          title: chat['title'].toString(),
+                        ),
+                      ),
+                    );
+                    await loadChats();
+                  },
+                ),
+              ),
+        ],
+      ),
+    );
+  }
 }
 
-class ChatScreen extends StatefulWidget {
+class ChatPage extends StatefulWidget {
   final String conversationId;
-  final String username;
+  final String title;
 
-  const ChatScreen({
+  const ChatPage({
     super.key,
     required this.conversationId,
-    required this.username,
+    required this.title,
   });
 
   @override
-  State<ChatScreen> createState() => _ChatScreenState();
+  State<ChatPage> createState() => _ChatPageState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatPageState extends State<ChatPage> {
   final controller = TextEditingController();
-  final uuid = const Uuid();
+  final scrollController = ScrollController();
+
   List<Map<String, dynamic>> messages = [];
   bool loading = true;
+  bool sending = false;
   String? error;
   RealtimeChannel? channel;
 
   @override
   void initState() {
     super.initState();
-    load();
-    channel = supa.channel('messages-${widget.conversationId}').onPostgresChanges(
-      event: PostgresChangeEvent.insert,
-      schema: 'public',
-      table: 'messages',
-      filter: Filter.or(
-        Filter('conversation_id', 'eq', widget.conversationId),
-      ),
-      callback: (payload) async {
-        await load();
-      },
-    );
-    supa.realtime.setAuth();
+    loadMessages();
+
+    channel = db
+        .channel('chat-${widget.conversationId}')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'messages',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'conversation_id',
+            value: widget.conversationId,
+          ),
+          callback: (_) {
+            loadMessages();
+          },
+        )
+        .subscribe();
   }
 
-  Future<void> load() async {
+  @override
+  void dispose() {
+    controller.dispose();
+    scrollController.dispose();
+    if (channel != null) {
+      db.removeChannel(channel!);
+    }
+    super.dispose();
+  }
+
+  Future<void> loadMessages() async {
     try {
-      final rows = await supa
+      final rows = await db
           .from('messages')
-          .select('id,sender_id,ciphertext,created_at,delivery_status,client_message_id')
+          .select('id, sender_id, ciphertext, created_at')
           .eq('conversation_id', widget.conversationId)
-          .order('created_at');
+          .order('created_at', ascending: true);
+
+      if (!mounted) return;
 
       setState(() {
         messages = List<Map<String, dynamic>>.from(rows);
         loading = false;
+        error = null;
+      });
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (scrollController.hasClients) {
+          scrollController.jumpTo(
+            scrollController.position.maxScrollExtent,
+          );
+        }
       });
     } catch (e) {
       if (mounted) {
         setState(() {
-          error = _friendly(e);
           loading = false;
+          error = _friendly(e);
         });
       }
     }
   }
 
-  Future<void> send() async {
-    if (controller.text.trim().isEmpty) return;
-    setState(() => error = 'Küldés letiltva: a Signal Protocol-alapú E2EE kliens és tartós kulcstárolás nincs még integrálva.');
-  }
+  Future<void> sendMessage() async {
+    final text = controller.text.trim();
+    if (text.isEmpty || sending) return;
 
-  @override
-  void dispose() {
-    if (channel != null) {
-      supa.removeChannel(channel!);
+    setState(() {
+      sending = true;
+      error = null;
+    });
+
+    try {
+      final user = db.auth.currentUser;
+      if (user == null) {
+        throw Exception('Nincs bejelentkezett felhasználó.');
+      }
+
+      await db.from('messages').insert({
+        'conversation_id': widget.conversationId,
+        'sender_id': user.id,
+        // Prototípus: itt a szöveg olvasható formában kerül tárolásra.
+        'ciphertext': text,
+        'client_message_id': _uuid.v4(),
+      });
+
+      controller.clear();
+      await loadMessages();
+    } catch (e) {
+      if (mounted) setState(() => error = _friendly(e));
+    } finally {
+      if (mounted) setState(() => sending = false);
     }
-    controller.dispose();
-    super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => Scaffo
+  Widget build(BuildContext context) {
+    final myId = db.auth.currentUser?.id;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.title),
+      ),
+      body: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(12, 6, 12, 10),
+            child: Text(
+              'A prototípus üzenetei nincsenek végpontok között titkosítva.',
+              style: TextStyle(fontSize: 11, color: Colors.orangeAccent),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: SelectableText(
+                error!,
+                style: const TextStyle(color: Colors.redAccent),
+              ),
+            ),
+          Expanded(
+            child: loading
+                ? const Center(child: CircularProgressIndicator())
+                : messages.isEmpty
+                    ? const Center(child: Text('Küldd el az első üzenetet!'))
+                    : ListView.builder(
+                        controller: scrollController,
+                        padding: const EdgeInsets.all(12),
+                        itemCount: messages.length,
+                        itemBuilder: (context, index) {
+                          final message = messages[index];
+                          final mine = message['sender_id'] == myId;
+                          final text =
+                              message['ciphertext']?.toString() ?? '';
+
+                          return Align(
+                            alignment: mine
+                                ? Alignment.centerRight
+                                : Alignment.centerLeft,
+                            child: Container(
+                              constraints: BoxConstraints(
+                                maxWidth:
+                                    MediaQuery.of(context).size.width * 0.78,
+                              ),
+                              margin: const EdgeInsets.symmetric(vertical: 4),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: mine ? _blue : _panel,
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Text(text),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: controller,
+                      minLines: 1,
+                      maxLines: 5,
+                      textCapitalization: TextCapitalization.sentences,
+                      onSubmitted: (_) => sendMessage(),
+                      decoration: const InputDecoration(
+                        hintText: 'Üzenet írása…',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    onPressed: sending ? null : sendMessage,
+                    icon: sending
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Icon(Icons.send),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _friendly(Object error) {
+  final text = error.toString();
+  if (text.contains('permission denied') ||
+      text.contains('42501') ||
+      text.contains('row-level security')) {
+    return 'Az adatbázis engedélye megtagadta a műveletet. '
+        'Ellenőrizni kell a Supabase RLS-szabályait.';
+  }
+  if (text.contains('get_or_create_direct_conversation')) {
+    return 'Hiányzik vagy nem megfelelő a beszélgetést létrehozó '
+        'get_or_create_direct_conversation RPC.';
+  }
+  return text;
+}
+
