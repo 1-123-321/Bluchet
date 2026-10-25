@@ -81,14 +81,14 @@ class BluchetPalette {
 
   static const Color primary = royalBlue700;
   static const Color primaryDark = royalBlue900;
-  static const Color accent = turquoise600;
+  static const Color accent = turquoise800;
   static const Color accentDark = turquoise900;
-  static const Color background = Color(0xFFEEF9FF);
-  static const Color card = Color(0xFFF5FCFF);
-  static const Color surface = Color(0xFFE6F7FF);
+  static const Color background = Color(0xFFD2EFEC);
+  static const Color card = Color(0xFFE4F6F3);
+  static const Color surface = Color(0xFFC4E7E2);
   static const Color text = Color(0xFF163E6D);
   static const Color textMuted = Color(0xFF4A6788);
-  static const Color success = Color(0xFF4FC2BD);
+  static const Color success = Color(0xFF1A8A89);
   static const Color error = Color(0xFFB54C5D);
   static const Color dangerSoft = Color(0xFFFDE7EC);
 }
@@ -912,11 +912,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _loadMessages(String conversationId) async {
     try {
-      final List<dynamic> rows = await Supabase.instance.client
-          .from('messages')
-          .select('id, conversation_id, sender_id, ciphertext, created_at')
-          .eq('conversation_id', conversationId)
-          .order('created_at', ascending: true);
+      final response = await Supabase.instance.client.rpc(
+        'get_messages_for_user',
+        params: {
+          'p_actor_id': widget.currentUserId,
+          'p_conversation_id': conversationId,
+        },
+      );
+      final List<dynamic> rows = response as List<dynamic>;
 
       final messages = <_Message>[];
       for (final item in rows) {
@@ -963,10 +966,10 @@ class _ChatScreenState extends State<ChatScreen> {
       await Supabase.instance.client.rpc(
         'insert_message_for_user',
         params: {
-          // These names must match the renamed SQL function parameters.
-          'p_actor_id': widget.currentUserId,
-          'p_conversation_id': conversation.id,
-          'p_ciphertext': text,
+          // Match the existing SQL function's actual parameter names.
+          'actor_id': widget.currentUserId,
+          'conversation_id': conversation.id,
+          'ciphertext': text,
         },
       );
 
