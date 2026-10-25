@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -11,7 +9,7 @@ Future<void> main() async {
   try {
     await dotenv.load(fileName: '.env');
   } catch (_) {
-    // Ignore missing .env when values are provided through --dart-define.
+    // Ignore missing .env when values are provided via --dart-define.
   }
 
   final url = _readEnv('SUPABASE_URL');
@@ -57,6 +55,22 @@ String _readEnv(String key) {
   return dotenv.env[key] ?? '';
 }
 
+class AppSecurity {
+  static bool isValidUsername(String value) {
+    final normalized = value.trim();
+    return RegExp(r'^[a-z0-9_]{3,24}$').hasMatch(normalized);
+  }
+
+  static bool isValidPassword(String value) {
+    return value.trim().length >= 6;
+  }
+
+  static bool isValidMessage(String value) {
+    final trimmed = value.trim();
+    return trimmed.isNotEmpty && trimmed.length <= 2000;
+  }
+}
+
 class BluchetApp extends StatefulWidget {
   const BluchetApp({super.key});
 
@@ -66,6 +80,7 @@ class BluchetApp extends StatefulWidget {
 
 class _BluchetAppState extends State<BluchetApp> {
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
+
   bool _loading = true;
   String? _currentUserId;
 
@@ -78,6 +93,7 @@ class _BluchetAppState extends State<BluchetApp> {
   Future<void> _loadCurrentUser() async {
     final userId = await _storage.read(key: 'bluchet_user_id');
     if (!mounted) return;
+
     setState(() {
       _currentUserId = userId;
       _loading = false;
@@ -85,6 +101,14 @@ class _BluchetAppState extends State<BluchetApp> {
   }
 
   Future<void> _login(String username, String password) async {
+    if (!AppSecurity.isValidUsername(username)) {
+      throw Exception('Username must be 3-24 chars, letters/numbers/underscore only.');
+    }
+
+    if (!AppSecurity.isValidPassword(password)) {
+      throw Exception('Password must be at least 6 characters.');
+    }
+
     final response = await Supabase.instance.client.rpc(
       'login_user',
       params: {
@@ -95,6 +119,7 @@ class _BluchetAppState extends State<BluchetApp> {
 
     final userId = response.toString();
     await _storage.write(key: 'bluchet_user_id', value: userId);
+
     if (!mounted) return;
     setState(() {
       _currentUserId = userId;
@@ -102,6 +127,14 @@ class _BluchetAppState extends State<BluchetApp> {
   }
 
   Future<void> _register(String username, String password) async {
+    if (!AppSecurity.isValidUsername(username)) {
+      throw Exception('Username must be 3-24 chars, letters/numbers/underscore only.');
+    }
+
+    if (!AppSecurity.isValidPassword(password)) {
+      throw Exception('Password must be at least 6 characters.');
+    }
+
     final response = await Supabase.instance.client.rpc(
       'register_user',
       params: {
@@ -112,6 +145,7 @@ class _BluchetAppState extends State<BluchetApp> {
 
     final userId = response.toString();
     await _storage.write(key: 'bluchet_user_id', value: userId);
+
     if (!mounted) return;
     setState(() {
       _currentUserId = userId;
@@ -173,6 +207,7 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
+
   bool _isRegister = false;
   bool _isSubmitting = false;
   String? _error;
@@ -184,6 +219,20 @@ class _AuthScreenState extends State<AuthScreen> {
     if (username.isEmpty || password.isEmpty) {
       setState(() {
         _error = 'Username and password are required.';
+      });
+      return;
+    }
+
+    if (!AppSecurity.isValidUsername(username)) {
+      setState(() {
+        _error = 'Username must be 3-24 chars, letters/numbers/underscore only.';
+      });
+      return;
+    }
+
+    if (!AppSecurity.isValidPassword(password)) {
+      setState(() {
+        _error = 'Password must be at least 6 characters.';
       });
       return;
     }
@@ -315,11 +364,13 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
-  final TextEditingController _usernameController = TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
   final TextEditingController _messageController = TextEditingController();
 
   bool _loading = true;
   String? _error;
+
+  List<_UserSearchResult> _searchResults = const [];
   List<_Conversation> _conversations = const [];
   _Conversation? _selectedConversation;
   List<_Message> _messages = const [];
@@ -330,6 +381,49 @@ class _ChatScreenState extends State<ChatScreen> {
     _refreshConversations();
   }
 
+  Future<void> _searchUsers(String term) async {
+    final cleaned = term.trim();
+    if (cleaned.isEmpty) {
+      setState(() {
+        _searchResults = const [];
+      });
+      return;
+    }
+
+    try {
+      final List<dynamic> rows = await Supabase.instance.client
+          .from('profiles')
+          .select()
+          .ilike('username', '%$cleaned%')
+          .limit(10);
+
+      final results = <_UserSearchResult>[];
+      for (final item in rows) {
+        final map = item as Map<String, dynamic>;
+        final userId = map['id'] as String;
+        final username = map['username'] as String;
+        if (userId != widget.currentUserId) {
+          results.add(
+            _UserSearchResult(
+              userId: userId,
+              username: username,
+            ),
+          );
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _searchResults = results;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
   Future<void> _refreshConversations() async {
     setState(() {
       _loading = true;
@@ -337,29 +431,37 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      final rows = await Supabase.instance.client
+      final List<dynamic> rows = await Supabase.instance.client
           .from('conversation_participants')
           .select()
           .eq('user_id', widget.currentUserId);
 
       final conversations = <_Conversation>[];
-      for (final row in rows as List) {
-        final conversationId = row['conversation_id'] as String;
-        final participants = await Supabase.instance.client
+
+      for (final item in rows) {
+        final map = item as Map<String, dynamic>;
+        final conversationId = map['conversation_id'] as String;
+
+        final List<dynamic> participants = await Supabase.instance.client
             .from('conversation_participants')
             .select()
             .eq('conversation_id', conversationId);
 
-        final otherParticipant = (participants as List).firstWhere(
-          (p) => p['user_id'] != widget.currentUserId,
-          orElse: () => null,
-        );
+        Map<String, dynamic>? otherParticipant;
+        for (final p in participants) {
+          final candidate = p as Map<String, dynamic>;
+          if (candidate['user_id'] != widget.currentUserId) {
+            otherParticipant = candidate;
+            break;
+          }
+        }
 
         if (otherParticipant == null) {
           continue;
         }
 
         final otherUserId = otherParticipant['user_id'] as String;
+
         final profile = await Supabase.instance.client
             .from('profiles')
             .select()
@@ -367,6 +469,7 @@ class _ChatScreenState extends State<ChatScreen> {
             .maybeSingle();
 
         final username = profile?['username'] ?? 'Unknown user';
+
         conversations.add(
           _Conversation(
             id: conversationId,
@@ -397,79 +500,79 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _loadMessages(String conversationId) async {
-    final rows = await Supabase.instance.client
-        .from('messages')
-        .select()
-        .eq('conversation_id', conversationId)
-        .order('created_at', ascending: true);
-
-    final messages = <_Message>[];
-    for (final row in rows as List) {
-      messages.add(
-        _Message(
-          id: row['id'] as String,
-          senderId: row['sender_id'] as String,
-          text: row['ciphertext'] as String? ?? '',
-          createdAt: DateTime.tryParse(row['created_at'] ?? '') ?? DateTime.now(),
-        ),
-      );
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _messages = messages;
-    });
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-      }
-    });
-  }
-
-  Future<void> _startConversation() async {
-    final otherUsername = _usernameController.text.trim();
-    if (otherUsername.isEmpty) {
-      setState(() {
-        _error = 'Enter a username to start a chat.';
-      });
-      return;
-    }
-
+  Future<void> _openConversation({
+    required String userId,
+    required String username,
+  }) async {
     try {
-      final profile = await Supabase.instance.client
-          .from('profiles')
-          .select()
-          .eq('username', otherUsername)
-          .maybeSingle();
-
-      if (profile == null) {
-        throw Exception('User not found.');
-      }
-
-      final otherUserId = profile['id'] as String;
       final conversationId = await Supabase.instance.client.rpc(
         'get_or_create_direct_conversation_for_user',
         params: {
           'actor_id': widget.currentUserId,
-          'other_user': otherUserId,
+          'other_user': userId,
         },
       ) as String;
 
-      final newConversation = _Conversation(
+      final conv = _Conversation(
         id: conversationId,
-        otherUserId: otherUserId,
-        otherUsername: otherUsername,
+        otherUserId: userId,
+        otherUsername: username,
       );
 
       await _refreshConversations();
+
       if (!mounted) return;
       setState(() {
-        _selectedConversation = newConversation;
+        _selectedConversation = conv;
       });
+
       await _loadMessages(conversationId);
-      _usernameController.clear();
+      _searchController.clear();
+      setState(() {
+        _searchResults = const [];
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  Future<void> _loadMessages(String conversationId) async {
+    try {
+      final List<dynamic> rows = await Supabase.instance.client
+          .from('messages')
+          .select()
+          .eq('conversation_id', conversationId)
+          .order('created_at', ascending: true);
+
+      final messages = <_Message>[];
+      for (final item in rows) {
+        final map = item as Map<String, dynamic>;
+        messages.add(
+          _Message(
+            id: map['id'] as String,
+            senderId: map['sender_id'] as String,
+            text: (map['ciphertext'] ?? '') as String,
+            createdAt:
+                DateTime.tryParse(map['created_at'] ?? '') ?? DateTime.now(),
+          ),
+        );
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _messages = messages;
+      });
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(
+            _scrollController.position.maxScrollExtent,
+          );
+        }
+      });
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -481,7 +584,15 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _sendMessage() async {
     final conversation = _selectedConversation;
     final text = _messageController.text.trim();
+
     if (conversation == null || text.isEmpty) {
+      return;
+    }
+
+    if (!AppSecurity.isValidMessage(text)) {
+      setState(() {
+        _error = 'Message is empty or too long.';
+      });
       return;
     }
 
@@ -494,6 +605,7 @@ class _ChatScreenState extends State<ChatScreen> {
           'ciphertext': text,
         },
       );
+
       _messageController.clear();
       await _loadMessages(conversation.id);
     } catch (error) {
@@ -523,7 +635,7 @@ class _ChatScreenState extends State<ChatScreen> {
           : Row(
               children: [
                 SizedBox(
-                  width: 320,
+                  width: 340,
                   child: Column(
                     children: [
                       Padding(
@@ -532,21 +644,44 @@ class _ChatScreenState extends State<ChatScreen> {
                           children: [
                             Expanded(
                               child: TextField(
-                                controller: _usernameController,
+                                controller: _searchController,
+                                onChanged: _searchUsers,
                                 decoration: const InputDecoration(
-                                  hintText: 'Chat with username',
+                                  hintText: 'Search user',
                                   border: OutlineInputBorder(),
                                 ),
                               ),
                             ),
                             const SizedBox(width: 8),
                             IconButton(
-                              onPressed: _startConversation,
-                              icon: const Icon(Icons.chat_bubble_outline),
+                              onPressed: () {
+                                _searchUsers(_searchController.text);
+                              },
+                              icon: const Icon(Icons.search),
                             ),
                           ],
                         ),
                       ),
+                      if (_searchResults.isNotEmpty)
+                        Container(
+                          constraints: const BoxConstraints(maxHeight: 160),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: _searchResults.length,
+                            itemBuilder: (context, index) {
+                              final result = _searchResults[index];
+                              return ListTile(
+                                title: Text(result.username),
+                                onTap: () {
+                                  _openConversation(
+                                    userId: result.userId,
+                                    username: result.username,
+                                  );
+                                },
+                              );
+                            },
+                          ),
+                        ),
                       if (_error != null)
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -560,11 +695,13 @@ class _ChatScreenState extends State<ChatScreen> {
                           itemCount: _conversations.length,
                           itemBuilder: (context, index) {
                             final conversation = _conversations[index];
-                            final isSelected = _selectedConversation?.id == conversation.id;
+                            final isSelected =
+                                _selectedConversation?.id == conversation.id;
 
                             return ListTile(
                               selected: isSelected,
                               title: Text(conversation.otherUsername),
+                              subtitle: const Text('Direct chat'),
                               onTap: () async {
                                 setState(() {
                                   _selectedConversation = conversation;
@@ -602,18 +739,22 @@ class _ChatScreenState extends State<ChatScreen> {
                                 itemCount: _messages.length,
                                 itemBuilder: (context, index) {
                                   final message = _messages[index];
-                                  final isMine = message.senderId == widget.currentUserId;
+                                  final isMine =
+                                      message.senderId == widget.currentUserId;
 
                                   return Align(
-                                    alignment:
-                                        isMine ? Alignment.centerRight : Alignment.centerLeft,
+                                    alignment: isMine
+                                        ? Alignment.centerRight
+                                        : Alignment.centerLeft,
                                     child: Container(
                                       margin: const EdgeInsets.symmetric(
                                         horizontal: 16,
                                         vertical: 6,
                                       ),
                                       padding: const EdgeInsets.all(12),
-                                      constraints: const BoxConstraints(maxWidth: 420),
+                                      constraints: const BoxConstraints(
+                                        maxWidth: 420,
+                                      ),
                                       decoration: BoxDecoration(
                                         color: isMine
                                             ? const Color(0xFF4F8CFF)
@@ -633,6 +774,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   Expanded(
                                     child: TextField(
                                       controller: _messageController,
+                                      onSubmitted: (_) => _sendMessage(),
                                       decoration: const InputDecoration(
                                         hintText: 'Type a message',
                                         border: OutlineInputBorder(),
@@ -682,7 +824,10 @@ class BluchetStartupApp extends StatelessWidget {
                   children: [
                     const Text(
                       'Bluchet',
-                      style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     const SizedBox(height: 16),
                     Text(message),
@@ -699,6 +844,16 @@ class BluchetStartupApp extends StatelessWidget {
       ),
     );
   }
+}
+
+class _UserSearchResult {
+  final String userId;
+  final String username;
+
+  const _UserSearchResult({
+    required this.userId,
+    required this.username,
+  });
 }
 
 class _Conversation {
