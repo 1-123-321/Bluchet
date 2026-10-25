@@ -2,6 +2,14 @@
 -- This adds a minimal server-side auth layer and message/conversation helpers
 -- without relying on Supabase Email Auth.
 
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  username text not null unique,
+  email text,
+  email_verified boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.user_credentials (
   user_id uuid primary key references public.profiles(id) on delete cascade,
   username text not null unique,
@@ -9,6 +17,30 @@ create table if not exists public.user_credentials (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+create table if not exists public.conversations (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.conversation_participants (
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  user_id uuid not null,
+  primary key (conversation_id, user_id)
+);
+
+create table if not exists public.messages (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.conversations(id) on delete cascade,
+  sender_id uuid not null,
+  ciphertext text not null,
+  created_at timestamptz not null default now()
+);
+
+alter table public.profiles enable row level security;
+alter table public.conversations enable row level security;
+alter table public.conversation_participants enable row level security;
+alter table public.messages enable row level security;
 
 create or replace function public.normalize_username(value text)
 returns text
@@ -108,18 +140,21 @@ begin
 
   select cp1.conversation_id into found_id
   from public.conversation_participants cp1
-  join public.conversation_participants cp2 on cp1.conversation_id = cp2.conversation_id
-  join public.conversations c on c.id = cp1.conversation_id and c.is_direct
+  join public.conversation_participants cp2
+    on cp1.conversation_id = cp2.conversation_id
   where cp1.user_id = actor_id
     and cp2.user_id = other_user
-    and (select count(*) from public.conversation_participants x where x.conversation_id = cp1.conversation_id) = 2
+  group by cp1.conversation_id
+  having count(*) = 2
   limit 1;
 
   if found_id is not null then
     return found_id;
   end if;
 
-  insert into public.conversations default values returning id into found_id;
+  insert into public.conversations default values
+  returning id into found_id;
+
   insert into public.conversation_participants(conversation_id, user_id)
   values (found_id, actor_id), (found_id, other_user);
 
@@ -145,31 +180,89 @@ begin
     raise exception 'Invalid message length';
   end if;
 
-  insert into public.messages(id, conversation_id, sender_id, client_message_id, ciphertext, protocol_version, delivery_status)
-  values (gen_random_uuid(), conversation_id, actor_id, gen_random_uuid(), ciphertext, 'signal-v1', 'sent')
+  insert into public.messages(id, conversation_id, sender_id, ciphertext)
+  values (gen_random_uuid(), conversation_id, actor_id, ciphertext)
   returning id into msg_id;
 
   return msg_id;
 end;
 $$;
 
-create policy "profiles readable to anon" on public.profiles for select to anon using (true);
-create policy "profiles readable to authenticated" on public.profiles for select to authenticated using (true);
+create policy if not exists "profiles_select_all"
+on public.profiles
+for select
+using (true);
 
-create policy "profiles readable to anon" on public.profiles for select to public using (true);
+create policy if not exists "profiles_insert_own"
+on public.profiles
+for insert
+with check (auth.uid() = id);
 
-grants for frontend demo access:
-grant select on public.profiles to anon;
-grant select on public.profiles to authenticated;
-grant select on public.conversations to anon;
-grant select on public.conversation_participants to anon;
-grant select, insert on public.messages to anon;
-grant update (delivery_status) on public.messages to anon;
-grant execute on function public.normalize_username(text) to anon;
-grant execute on function public.register_user(text, text) to anon;
-grant execute on function public.login_user(text, text) to anon;
-grant execute on function public.get_or_create_direct_conversation_for_user(uuid, uuid) to anon;
-grant execute on function public.insert_message_for_user(uuid, uuid, text) to anon;
+create policy if not exists "profiles_update_own"
+on public.profiles
+for update
+using (auth.uid() = id)
+with check (auth.uid() = id);
 
--- keep realtime publication if it exists
-alter publication supabase_realtime add table public.messages;
+create policy if not exists "conversations_select_own"
+on public.conversations
+for select
+using (
+  exists (
+    select 1
+    from public.conversation_participants cp
+    where cp.conversation_id = public.conversations.id
+      and cp.user_id = auth.uid()
+  )
+);
+
+create policy if not exists "conversations_insert_any"
+on public.conversations
+for insert
+with check (true);
+
+create policy if not exists "conversation_participants_select_own"
+on public.conversation_participants
+for select
+using (user_id = auth.uid());
+
+create policy if not exists "conversation_participants_insert_own"
+on public.conversation_participants
+for insert
+with check (user_id = auth.uid());
+
+create policy if not exists "messages_select_own"
+on public.messages
+for select
+using (
+  exists (
+    select 1
+    from public.conversation_participants cp
+    where cp.conversation_id = public.messages.conversation_id
+      and cp.user_id = auth.uid()
+  )
+);
+
+create policy if not exists "messages_insert_own"
+on public.messages
+for insert
+with check (
+  sender_id = auth.uid()
+  and exists (
+    select 1
+    from public.conversation_participants cp
+    where cp.conversation_id = public.messages.conversation_id
+      and cp.user_id = auth.uid()
+  )
+);
+
+grant usage on schema public to anon, authenticated;
+grant select, insert, update on public.profiles to anon, authenticated;
+grant select, insert, update on public.conversations to anon, authenticated;
+grant select, insert, update on public.conversation_participants to anon, authenticated;
+grant select, insert, update on public.messages to anon, authenticated;
+grant execute on function public.normalize_username(text) to anon, authenticated;
+grant execute on function public.register_user(text, text) to anon, authenticated;
+grant execute on function public.login_user(text, text) to anon, authenticated;
+grant execute on function public.get_or_create_direct_conversation_for_user(uuid, uuid) to anon, authenticated;
+grant execute on function public.insert_message_for_user(uuid, uuid, text) to anon, authenticated;
