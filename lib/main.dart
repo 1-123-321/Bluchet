@@ -9,16 +9,14 @@ Future<void> main() async {
   try {
     await dotenv.load(fileName: '.env');
   } catch (_) {
-    // Ignore missing .env when values are provided via --dart-define.
+    // Ignore a missing .env when values are supplied via --dart-define.
   }
 
   final url = _readEnv('SUPABASE_URL');
   final anonKey = _readEnv('SUPABASE_ANON_KEY');
 
-  final isConfigured = url.startsWith('https://') &&
-      anonKey.startsWith('sb_') &&
-      url.isNotEmpty &&
-      anonKey.isNotEmpty;
+  final isConfigured =
+      url.startsWith('https://') && url.isNotEmpty && anonKey.isNotEmpty;
 
   if (!isConfigured) {
     runApp(
@@ -30,16 +28,9 @@ Future<void> main() async {
   }
 
   try {
-    await Supabase.initialize(
-      url: url,
-      anonKey: anonKey,
-    );
+    await Supabase.initialize(url: url, anonKey: anonKey);
   } catch (error) {
-    runApp(
-      BluchetStartupApp(
-        message: error.toString(),
-      ),
-    );
+    runApp(BluchetStartupApp(message: error.toString()));
     return;
   }
 
@@ -47,23 +38,17 @@ Future<void> main() async {
 }
 
 String _readEnv(String key) {
+  const fromDartDefineValues = <String, String>{};
   final fromDartDefine = String.fromEnvironment(key, defaultValue: '');
-  if (fromDartDefine.isNotEmpty) {
-    return fromDartDefine;
-  }
-
-  return dotenv.env[key] ?? '';
+  if (fromDartDefine.isNotEmpty) return fromDartDefine;
+  return dotenv.env[key] ?? fromDartDefineValues[key] ?? '';
 }
 
 class AppSecurity {
-  static bool isValidUsername(String value) {
-    final normalized = value.trim();
-    return RegExp(r'^[a-z0-9_]{3,24}$').hasMatch(normalized);
-  }
+  static bool isValidUsername(String value) =>
+      RegExp(r'^[a-z0-9_]{3,24}$').hasMatch(value.trim());
 
-  static bool isValidPassword(String value) {
-    return value.trim().length >= 6;
-  }
+  static bool isValidPassword(String value) => value.length >= 6;
 
   static bool isValidMessage(String value) {
     final trimmed = value.trim();
@@ -72,7 +57,6 @@ class AppSecurity {
 }
 
 class BluchetPalette {
-  // Turquoise family: 10 shades, no black/white included.
   static const Color turquoise50 = Color(0xFFEAFDFB);
   static const Color turquoise100 = Color(0xFFD9FAF8);
   static const Color turquoise200 = Color(0xFFC3F5F4);
@@ -84,7 +68,6 @@ class BluchetPalette {
   static const Color turquoise800 = Color(0xFF1A8A89);
   static const Color turquoise900 = Color(0xFF136E70);
 
-  // Royal blue family: 10 shades, no black/white included.
   static const Color royalBlue50 = Color(0xFFEAF2FF);
   static const Color royalBlue100 = Color(0xFFDDEBFF);
   static const Color royalBlue200 = Color(0xFFD0E0FF);
@@ -125,9 +108,9 @@ class BluchetTheme {
         onSurface: BluchetPalette.text,
       ),
       textTheme: ThemeData.light().textTheme.apply(
-        bodyColor: BluchetPalette.text,
-        displayColor: BluchetPalette.text,
-      ),
+            bodyColor: BluchetPalette.text,
+            displayColor: BluchetPalette.text,
+          ),
     );
 
     return base.copyWith(
@@ -156,7 +139,8 @@ class BluchetTheme {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: BluchetPalette.primary, width: 2),
+          borderSide:
+              const BorderSide(color: BluchetPalette.primary, width: 2),
         ),
         hintStyle: const TextStyle(color: BluchetPalette.textMuted),
       ),
@@ -236,73 +220,76 @@ class _BluchetAppState extends State<BluchetApp> {
   }
 
   Future<void> _loadCurrentUser() async {
-    final userId = await _storage.read(key: 'bluchet_user_id');
-    if (!mounted) return;
-
-    setState(() {
-      _currentUserId = userId;
-      _loading = false;
-    });
+    try {
+      final userId = await _storage.read(key: 'bluchet_user_id');
+      if (!mounted) return;
+      setState(() {
+        _currentUserId = userId;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _currentUserId = null;
+        _loading = false;
+      });
+    }
   }
 
   Future<void> _login(String username, String password) async {
     if (!AppSecurity.isValidUsername(username)) {
-      throw Exception('Username must be 3-24 chars, letters/numbers/underscore only.');
+      throw Exception(
+        'Username must be 3-24 chars, letters/numbers/underscore only.',
+      );
     }
-
     if (!AppSecurity.isValidPassword(password)) {
       throw Exception('Password must be at least 6 characters.');
     }
 
     final response = await Supabase.instance.client.rpc(
       'login_user',
-      params: {
-        'p_username': username,
-        'p_password': password,
-      },
+      params: {'p_username': username.trim(), 'p_password': password},
     );
 
     final userId = response.toString();
+    if (userId.isEmpty || userId == 'null') {
+      throw Exception('Login did not return a valid user ID.');
+    }
     await _storage.write(key: 'bluchet_user_id', value: userId);
 
     if (!mounted) return;
-    setState(() {
-      _currentUserId = userId;
-    });
+    setState(() => _currentUserId = userId);
   }
 
   Future<void> _register(String username, String password) async {
     if (!AppSecurity.isValidUsername(username)) {
-      throw Exception('Username must be 3-24 chars, letters/numbers/underscore only.');
+      throw Exception(
+        'Username must be 3-24 chars, letters/numbers/underscore only.',
+      );
     }
-
     if (!AppSecurity.isValidPassword(password)) {
       throw Exception('Password must be at least 6 characters.');
     }
 
     final response = await Supabase.instance.client.rpc(
       'register_user',
-      params: {
-        'p_username': username,
-        'p_password': password,
-      },
+      params: {'p_username': username.trim(), 'p_password': password},
     );
 
     final userId = response.toString();
+    if (userId.isEmpty || userId == 'null') {
+      throw Exception('Registration did not return a valid user ID.');
+    }
     await _storage.write(key: 'bluchet_user_id', value: userId);
 
     if (!mounted) return;
-    setState(() {
-      _currentUserId = userId;
-    });
+    setState(() => _currentUserId = userId);
   }
 
   Future<void> _logout() async {
     await _storage.delete(key: 'bluchet_user_id');
     if (!mounted) return;
-    setState(() {
-      _currentUserId = null;
-    });
+    setState(() => _currentUserId = null);
   }
 
   @override
@@ -313,9 +300,7 @@ class _BluchetAppState extends State<BluchetApp> {
         home: const Scaffold(
           backgroundColor: BluchetPalette.background,
           body: Center(
-            child: CircularProgressIndicator(
-              color: BluchetPalette.primary,
-            ),
+            child: CircularProgressIndicator(color: BluchetPalette.primary),
           ),
         ),
       );
@@ -324,19 +309,13 @@ class _BluchetAppState extends State<BluchetApp> {
     if (_currentUserId == null) {
       return MaterialApp(
         theme: BluchetTheme.light(),
-        home: AuthScreen(
-          onLogin: _login,
-          onRegister: _register,
-        ),
+        home: AuthScreen(onLogin: _login, onRegister: _register),
       );
     }
 
     return MaterialApp(
       theme: BluchetTheme.light(),
-      home: ChatScreen(
-        currentUserId: _currentUserId!,
-        onLogout: _logout,
-      ),
+      home: ChatScreen(currentUserId: _currentUserId!, onLogout: _logout),
     );
   }
 }
@@ -363,28 +342,30 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _isSubmitting = false;
   String? _error;
 
+  @override
+  void dispose() {
+    _usernameController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
     final username = _usernameController.text.trim();
-    final password = _passwordController.text.trim();
+    final password = _passwordController.text;
 
     if (username.isEmpty || password.isEmpty) {
-      setState(() {
-        _error = 'Username and password are required.';
-      });
+      setState(() => _error = 'Username and password are required.');
       return;
     }
-
     if (!AppSecurity.isValidUsername(username)) {
       setState(() {
-        _error = 'Username must be 3-24 chars, letters/numbers/underscore only.';
+        _error =
+            'Username must be 3-24 chars, letters/numbers/underscore only.';
       });
       return;
     }
-
     if (!AppSecurity.isValidPassword(password)) {
-      setState(() {
-        _error = 'Password must be at least 6 characters.';
-      });
+      setState(() => _error = 'Password must be at least 6 characters.');
       return;
     }
 
@@ -400,15 +381,13 @@ class _AuthScreenState extends State<AuthScreen> {
         await widget.onLogin(username, password);
       }
     } catch (error) {
-      setState(() {
-        _error = error.toString().replaceFirst('Exception: ', '');
-      });
-    } finally {
       if (mounted) {
         setState(() {
-          _isSubmitting = false;
+          _error = error.toString().replaceFirst('Exception: ', '');
         });
       }
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
@@ -455,19 +434,15 @@ class _AuthScreenState extends State<AuthScreen> {
                     const SizedBox(height: 24),
                     TextField(
                       controller: _usernameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Username',
-                        border: OutlineInputBorder(),
-                      ),
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(labelText: 'Username'),
                     ),
                     const SizedBox(height: 16),
                     TextField(
                       controller: _passwordController,
                       obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Password',
-                        border: OutlineInputBorder(),
-                      ),
+                      onSubmitted: (_) => _submit(),
+                      decoration: const InputDecoration(labelText: 'Password'),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 16),
@@ -481,7 +456,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       width: double.infinity,
                       child: ElevatedButton(
                         onPressed: _isSubmitting ? null : _submit,
-                        child: const Text('Login / Register'),
+                        child: Text(_isSubmitting ? 'Please wait…' : 'Continue'),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -534,7 +509,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool _loading = true;
   String? _error;
-
   List<_UserSearchResult> _searchResults = const [];
   List<_Conversation> _conversations = const [];
   _Conversation? _selectedConversation;
@@ -544,6 +518,15 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _refreshConversations();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _searchController.dispose();
+    _messageController.dispose();
+    _groupNameController.dispose();
+    super.dispose();
   }
 
   void _showError(Object error) {
@@ -556,9 +539,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _searchUsers(String term) async {
     final cleaned = term.trim();
     if (cleaned.isEmpty) {
-      setState(() {
-        _searchResults = const [];
-      });
+      if (mounted) setState(() => _searchResults = const []);
       return;
     }
 
@@ -580,9 +561,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       if (!mounted) return;
-      setState(() {
-        _searchResults = results;
-      });
+      setState(() => _searchResults = results);
     } catch (error) {
       _showError(error);
     }
@@ -600,9 +579,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _createGroupConversation() async {
     if (_groupInviteIds.isEmpty) {
-      setState(() {
-        _error = 'At least one other member is required.';
-      });
+      setState(() => _error = 'At least one other member is required.');
       return;
     }
 
@@ -610,32 +587,35 @@ class _ChatScreenState extends State<ChatScreen> {
     final memberIds = <String>{..._groupInviteIds, widget.currentUserId}.toList();
 
     try {
-      final conversationId = await Supabase.instance.client.rpc(
+      final response = await Supabase.instance.client.rpc(
         'create_group_conversation',
         params: {
           'p_actor_id': widget.currentUserId,
           'p_member_ids': memberIds,
           'p_title': groupTitle.isEmpty ? 'Group chat' : groupTitle,
         },
-      ) as String;
+      );
+      final conversationId = response.toString();
+      if (conversationId.isEmpty || conversationId == 'null') {
+        throw Exception('Group creation did not return a conversation ID.');
+      }
 
       _groupNameController.clear();
       _groupInviteIds.clear();
-
       await _refreshConversations();
 
       if (!mounted) return;
+      final title = groupTitle.isEmpty ? 'Group chat' : groupTitle;
       setState(() {
         _selectedConversation = _Conversation(
           id: conversationId,
           otherUserId: widget.currentUserId,
           otherUsername: 'Group',
           isGroup: true,
-          title: groupTitle.isEmpty ? 'Group chat' : groupTitle,
+          title: title,
           memberIds: memberIds,
         );
       });
-
       await _loadMessages(conversationId);
     } catch (error) {
       _showError(error);
@@ -651,10 +631,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final memberIds = rows
         .map((item) => (item as Map<String, dynamic>)['user_id'] as String)
         .toList();
-
-    if (memberIds.isEmpty) {
-      return const [];
-    }
+    if (memberIds.isEmpty) return const [];
 
     final profiles = await Supabase.instance.client
         .from('profiles')
@@ -674,109 +651,113 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _inviteUsersToGroup(_Conversation group) async {
     final inviteIds = <String>{};
+    _searchController.clear();
+    _searchResults = const [];
 
     await showDialog<void>(
       context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (innerContext, setDialogState) {
-            return AlertDialog(
-              title: const Text('Invite members'),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: _searchController,
-                      decoration: const InputDecoration(
-                        hintText: 'Search user...',
-                        border: OutlineInputBorder(),
-                      ),
-                      onChanged: (value) async {
-                        await _searchUsers(value);
-                        setDialogState(() {});
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 260),
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: _searchResults.length,
-                        itemBuilder: (context, index) {
-                          final result = _searchResults[index];
-                          if (result.userId == widget.currentUserId ||
-                              group.memberIds.contains(result.userId)) {
-                            return const SizedBox.shrink();
-                          }
-
-                          final selected = inviteIds.contains(result.userId);
-
-                          return ListTile(
-                            title: Text(result.username),
-                            trailing: Icon(
-                              selected ? Icons.check_circle : Icons.add_circle_outline,
-                              color: selected ? BluchetPalette.primary : BluchetPalette.accent,
-                            ),
-                            onTap: () {
-                              setDialogState(() {
-                                if (selected) {
-                                  inviteIds.remove(result.userId);
-                                } else {
-                                  inviteIds.add(result.userId);
-                                }
-                              });
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  onPressed: () async {
-                    final idsToInvite = inviteIds.toList();
-                    if (idsToInvite.isEmpty) {
-                      Navigator.pop(dialogContext);
-                      return;
-                    }
-
-                    await Supabase.instance.client.from('conversation_participants').insert(
-                      idsToInvite
-                          .map(
-                            (userId) => {
-                              'conversation_id': group.id,
-                              'user_id': userId,
-                            },
-                          )
-                          .toList(),
-                    );
-
-                    await _refreshConversations();
-                    if (!mounted) return;
-                    Navigator.pop(dialogContext);
-                    setState(() {
-                      _selectedConversation = group;
-                    });
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (innerContext, setDialogState) => AlertDialog(
+          title: const Text('Invite members'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: _searchController,
+                  decoration: const InputDecoration(
+                    hintText: 'Search user...',
+                    border: OutlineInputBorder(),
+                  ),
+                  onChanged: (value) async {
+                    await _searchUsers(value);
+                    setDialogState(() {});
                   },
-                  child: const Text('Invite'),
+                ),
+                const SizedBox(height: 12),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 260),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _searchResults.length,
+                    itemBuilder: (context, index) {
+                      final result = _searchResults[index];
+                      if (result.userId == widget.currentUserId ||
+                          group.memberIds.contains(result.userId)) {
+                        return const SizedBox.shrink();
+                      }
+                      final selected = inviteIds.contains(result.userId);
+                      return ListTile(
+                        title: Text(result.username),
+                        trailing: Icon(
+                          selected
+                              ? Icons.check_circle
+                              : Icons.add_circle_outline,
+                          color: selected
+                              ? BluchetPalette.primary
+                              : BluchetPalette.accent,
+                        ),
+                        onTap: () {
+                          setDialogState(() {
+                            if (selected) {
+                              inviteIds.remove(result.userId);
+                            } else {
+                              inviteIds.add(result.userId);
+                            }
+                          });
+                        },
+                      );
+                    },
+                  ),
                 ),
               ],
-            );
-          },
-        );
-      },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                final idsToInvite = inviteIds.toList();
+                if (idsToInvite.isEmpty) {
+                  Navigator.pop(dialogContext);
+                  return;
+                }
+
+                try {
+                  await Supabase.instance.client
+                      .from('conversation_participants')
+                      .insert(
+                        idsToInvite
+                            .map(
+                              (userId) => {
+                                'conversation_id': group.id,
+                                'user_id': userId,
+                              },
+                            )
+                            .toList(),
+                      );
+                  await _refreshConversations();
+                  if (!mounted) return;
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  setState(() => _selectedConversation = group);
+                } catch (error) {
+                  _showError(error);
+                }
+              },
+              child: const Text('Invite'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
   Future<void> _refreshConversations() async {
+    if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
@@ -789,7 +770,8 @@ class _ChatScreenState extends State<ChatScreen> {
           .eq('user_id', widget.currentUserId);
 
       final conversationIds = participantRows
-          .map((item) => (item as Map<String, dynamic>)['conversation_id'] as String)
+          .map((item) =>
+              (item as Map<String, dynamic>)['conversation_id'] as String)
           .toList();
 
       if (conversationIds.isEmpty) {
@@ -797,6 +779,7 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() {
           _conversations = const [];
           _selectedConversation = null;
+          _messages = const [];
           _loading = false;
         });
         return;
@@ -813,7 +796,6 @@ class _ChatScreenState extends State<ChatScreen> {
       };
 
       final conversations = <_Conversation>[];
-
       for (final item in participantRows) {
         final map = item as Map<String, dynamic>;
         final conversationId = map['conversation_id'] as String;
@@ -849,20 +831,15 @@ class _ChatScreenState extends State<ChatScreen> {
             break;
           }
         }
-
-        if (otherParticipant == null) {
-          continue;
-        }
+        if (otherParticipant == null) continue;
 
         final otherUserId = otherParticipant['user_id'] as String;
-
         final profile = await Supabase.instance.client
             .from('profiles')
             .select('id, username')
             .eq('id', otherUserId)
             .maybeSingle();
-
-        final username = profile?['username'] ?? 'Unknown user';
+        final username = profile?['username'] as String? ?? 'Unknown user';
 
         conversations.add(
           _Conversation(
@@ -874,22 +851,31 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       if (!mounted) return;
+      final previousSelectedId = _selectedConversation?.id;
+      final selectedStillExists = conversations.any(
+        (conversation) => conversation.id == previousSelectedId,
+      );
       setState(() {
         _conversations = conversations;
-        if (_selectedConversation == null && conversations.isNotEmpty) {
-          _selectedConversation = conversations.first;
+        if (!selectedStillExists) {
+          _selectedConversation =
+              conversations.isNotEmpty ? conversations.first : null;
+        } else {
+          _selectedConversation = conversations.firstWhere(
+            (conversation) => conversation.id == previousSelectedId,
+          );
         }
         _loading = false;
       });
 
       if (_selectedConversation != null) {
         await _loadMessages(_selectedConversation!.id);
+      } else if (mounted) {
+        setState(() => _messages = const []);
       }
     } catch (error) {
       _showError(error);
-      setState(() {
-        _loading = false;
-      });
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -898,16 +884,16 @@ class _ChatScreenState extends State<ChatScreen> {
     required String username,
   }) async {
     try {
-      final conversationId = await Supabase.instance.client.rpc(
+      final response = await Supabase.instance.client.rpc(
         'get_or_create_direct_conversation_for_user',
         params: {
           'actor_id': widget.currentUserId,
           'other_user': userId,
         },
-      ) as String;
+      );
+      final conversationId = response.toString();
 
       await _refreshConversations();
-
       if (!mounted) return;
       setState(() {
         _selectedConversation = _Conversation(
@@ -915,13 +901,10 @@ class _ChatScreenState extends State<ChatScreen> {
           otherUserId: userId,
           otherUsername: username,
         );
-      });
-
-      await _loadMessages(conversationId);
-      _searchController.clear();
-      setState(() {
+        _searchController.clear();
         _searchResults = const [];
       });
+      await _loadMessages(conversationId);
     } catch (error) {
       _showError(error);
     }
@@ -942,17 +925,17 @@ class _ChatScreenState extends State<ChatScreen> {
           _Message(
             id: map['id'] as String,
             senderId: map['sender_id'] as String,
-            text: (map['ciphertext'] ?? '') as String,
-            createdAt:
-                DateTime.tryParse(map['created_at'] ?? '') ?? DateTime.now(),
+            text: (map['ciphertext'] ?? '').toString(),
+            createdAt: DateTime.tryParse(
+                  (map['created_at'] ?? '').toString(),
+                ) ??
+                DateTime.now(),
           ),
         );
       }
 
       if (!mounted) return;
-      setState(() {
-        _messages = messages;
-      });
+      setState(() => _messages = messages);
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients) {
@@ -969,15 +952,10 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _sendMessage() async {
     final conversation = _selectedConversation;
     final text = _messageController.text.trim();
-
-    if (conversation == null || text.isEmpty) {
-      return;
-    }
+    if (conversation == null || text.isEmpty) return;
 
     if (!AppSecurity.isValidMessage(text)) {
-      setState(() {
-        _error = 'Message is empty or too long.';
-      });
+      setState(() => _error = 'Message is empty or too long.');
       return;
     }
 
@@ -985,9 +963,10 @@ class _ChatScreenState extends State<ChatScreen> {
       await Supabase.instance.client.rpc(
         'insert_message_for_user',
         params: {
-          'actor_id': widget.currentUserId,
-          'conversation_id': conversation.id,
-          'ciphertext': text,
+          // These names must match the renamed SQL function parameters.
+          'p_actor_id': widget.currentUserId,
+          'p_conversation_id': conversation.id,
+          'p_ciphertext': text,
         },
       );
 
@@ -1005,55 +984,50 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: const Text('Bluchet'),
         actions: [
-          if (_selectedConversation != null && _selectedConversation!.isGroup)
+          if (_selectedConversation?.isGroup == true)
             IconButton(
               onPressed: () async {
-                final members = await _loadGroupMembers(_selectedConversation!.id);
-                if (!mounted) return;
-
-                showDialog(
-                  context: context,
-                  builder: (context) {
-                    return AlertDialog(
+                final selected = _selectedConversation;
+                if (selected == null) return;
+                try {
+                  final members = await _loadGroupMembers(selected.id);
+                  if (!mounted) return;
+                  showDialog<void>(
+                    context: context,
+                    builder: (dialogContext) => AlertDialog(
                       title: const Text('Group members'),
                       content: SizedBox(
                         width: 320,
                         child: ListView.builder(
                           shrinkWrap: true,
                           itemCount: members.length,
-                          itemBuilder: (context, index) {
-                            final member = members[index];
-                            return ListTile(
-                              title: Text(member.username),
-                            );
-                          },
+                          itemBuilder: (context, index) =>
+                              ListTile(title: Text(members[index].username)),
                         ),
                       ),
                       actions: [
                         TextButton(
-                          onPressed: () => Navigator.pop(context),
+                          onPressed: () => Navigator.pop(dialogContext),
                           child: const Text('Close'),
                         ),
                       ],
-                    );
-                  },
-                );
+                    ),
+                  );
+                } catch (error) {
+                  _showError(error);
+                }
               },
               icon: const Icon(Icons.group),
             ),
           IconButton(
-            onPressed: () async {
-              await widget.onLogout();
-            },
+            onPressed: widget.onLogout,
             icon: const Icon(Icons.logout),
           ),
         ],
       ),
       body: _loading
           ? const Center(
-              child: CircularProgressIndicator(
-                color: BluchetPalette.primary,
-              ),
+              child: CircularProgressIndicator(color: BluchetPalette.primary),
             )
           : Column(
               children: [
@@ -1100,7 +1074,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                       ),
                                     )
                                     .username,
-                                style: const TextStyle(color: BluchetPalette.text),
+                                style: const TextStyle(
+                                  color: BluchetPalette.text,
+                                ),
                               ),
                               onDeleted: () => _toggleGroupInvite(userId),
                             ),
@@ -1132,22 +1108,32 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 if (_searchResults.isNotEmpty)
-                  Container(
+                  ConstrainedBox(
                     constraints: const BoxConstraints(maxHeight: 180),
                     child: ListView.builder(
                       shrinkWrap: true,
                       itemCount: _searchResults.length,
                       itemBuilder: (context, index) {
                         final result = _searchResults[index];
-                        final isSelected = _groupInviteIds.contains(result.userId);
-
+                        final isSelected =
+                            _groupInviteIds.contains(result.userId);
                         return ListTile(
                           title: Text(result.username),
                           trailing: Icon(
-                            isSelected ? Icons.check_circle : Icons.add_circle_outline,
-                            color: isSelected ? BluchetPalette.primary : BluchetPalette.accent,
+                            isSelected
+                                ? Icons.check_circle
+                                : Icons.add_circle_outline,
+                            color: isSelected
+                                ? BluchetPalette.primary
+                                : BluchetPalette.accent,
                           ),
-                          onTap: () => _toggleGroupInvite(result.userId),
+                          onTap: () {
+                            _toggleGroupInvite(result.userId);
+                          },
+                          onLongPress: () => _openConversation(
+                            userId: result.userId,
+                            username: result.username,
+                          ),
                         );
                       },
                     ),
@@ -1172,8 +1158,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     itemCount: _conversations.length,
                     itemBuilder: (context, index) {
                       final conversation = _conversations[index];
-                      final isSelected = _selectedConversation?.id == conversation.id;
-
+                      final isSelected =
+                          _selectedConversation?.id == conversation.id;
                       return ListTile(
                         selected: isSelected,
                         selectedTileColor: BluchetPalette.royalBlue100,
@@ -1187,21 +1173,19 @@ class _ChatScreenState extends State<ChatScreen> {
                           conversation.isGroup
                               ? 'Group • ${conversation.memberIds.length} members'
                               : 'Direct chat',
-                          style: const TextStyle(color: BluchetPalette.textMuted),
+                          style:
+                              const TextStyle(color: BluchetPalette.textMuted),
                         ),
                         trailing: conversation.isGroup
                             ? IconButton(
                                 icon: const Icon(Icons.person_add_alt_1),
                                 color: BluchetPalette.primaryDark,
-                                onPressed: () async {
-                                  await _inviteUsersToGroup(conversation);
-                                },
+                                onPressed: () =>
+                                    _inviteUsersToGroup(conversation),
                               )
                             : null,
                         onTap: () async {
-                          setState(() {
-                            _selectedConversation = conversation;
-                          });
+                          setState(() => _selectedConversation = conversation);
                           await _loadMessages(conversation.id);
                         },
                       );
@@ -1213,7 +1197,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       ? const Center(
                           child: Text(
                             'Select a conversation',
-                            style: TextStyle(color: BluchetPalette.textMuted),
+                            style:
+                                TextStyle(color: BluchetPalette.textMuted),
                           ),
                         )
                       : _ConversationDetailView(
@@ -1260,7 +1245,9 @@ class _ConversationDetailView extends StatelessWidget {
           child: Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              conversation.isGroup ? conversation.title : conversation.otherUsername,
+              conversation.isGroup
+                  ? conversation.title
+                  : conversation.otherUsername,
               style: const TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
@@ -1285,21 +1272,26 @@ class _ConversationDetailView extends StatelessWidget {
             itemBuilder: (context, index) {
               final message = messages[index];
               final isMine = message.senderId == currentUserId;
-
               return Align(
-                alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+                alignment:
+                    isMine ? Alignment.centerRight : Alignment.centerLeft,
                 child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  margin:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
                   padding: const EdgeInsets.all(12),
                   constraints: const BoxConstraints(maxWidth: 620),
                   decoration: BoxDecoration(
-                    color: isMine ? BluchetPalette.primary : BluchetPalette.royalBlue100,
+                    color: isMine
+                        ? BluchetPalette.primary
+                        : BluchetPalette.royalBlue100,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
                     message.text,
                     style: TextStyle(
-                      color: isMine ? const Color(0xFF103666) : BluchetPalette.text,
+                      color: isMine
+                          ? const Color(0xFF103666)
+                          : BluchetPalette.text,
                     ),
                   ),
                 ),
