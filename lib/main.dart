@@ -62,6 +62,9 @@ class _KulcskodAppState extends State<KulcskodApp> {
   bool _registerDone = false;
   bool _loginDone = false;
   bool _messageDone = false;
+  bool _isSubmitting = false;
+  String? _registerError;
+  String? _loginError;
 
   String get _statusText {
     if (!widget.configured) {
@@ -73,6 +76,112 @@ class _KulcskodAppState extends State<KulcskodApp> {
     }
 
     return 'A backend készen áll.';
+  }
+
+  Future<void> _handleRegister() async {
+    final username = _normalizeUsername(_registerUsername.text);
+    final password = _registerPassword.text.trim();
+    final hiddenEmail = _buildInternalEmail(username);
+
+    if (username.isEmpty || password.isEmpty) {
+      setState(() {
+        _registerDone = false;
+        _registerError = 'A felhasználónév és a jelszó kötelező.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _registerError = null;
+      _registerDone = false;
+    });
+
+    try {
+      final authResponse = await db.auth.signUp(
+        email: hiddenEmail,
+        password: password,
+      );
+
+      final user = authResponse.user;
+      if (user != null) {
+        await db.from('profiles').upsert({
+          'id': user.id,
+          'username': username,
+          'email': hiddenEmail,
+          'email_verified': user.emailConfirmedAt != null,
+        }).select();
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _registerDone = true;
+        _registerUsername.clear();
+        _registerPassword.clear();
+      });
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _registerError = _friendly(e));
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      setState(() => _registerError = _friendly(e));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _registerError = _friendly(e));
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  Future<void> _handleLogin() async {
+    final username = _normalizeUsername(_loginUsername.text);
+    final password = _loginPassword.text.trim();
+    final hiddenEmail = _buildInternalEmail(username);
+
+    if (username.isEmpty || password.isEmpty) {
+      setState(() {
+        _loginDone = false;
+        _loginError = 'A felhasználónév és a jelszó kötelező.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _loginError = null;
+      _loginDone = false;
+    });
+
+    try {
+      await db.auth.signInWithPassword(
+        email: hiddenEmail,
+        password: password,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _loginDone = true;
+        _loginUsername.clear();
+        _loginPassword.clear();
+      });
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      setState(() => _loginError = _friendly(e));
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      setState(() => _loginError = _friendly(e));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loginError = _friendly(e));
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
   }
 
   @override
@@ -203,8 +312,12 @@ class _KulcskodAppState extends State<KulcskodApp> {
                         const SizedBox(height: 12),
                         if (_selectedIndex == 0 && _registerDone)
                           _buildSuccess('Sikeres regisztráció!'),
+                        if (_selectedIndex == 0 && _registerError != null)
+                          _buildError(_registerError!),
                         if (_selectedIndex == 1 && _loginDone)
                           _buildSuccess('Sikeres bejelentkezés!'),
+                        if (_selectedIndex == 1 && _loginError != null)
+                          _buildError(_loginError!),
                         if (_selectedIndex == 2 && _messageDone)
                           _buildSuccess('Az üzenet elküldve.'),
                         const SizedBox(height: 12),
@@ -255,14 +368,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () {
-                if (_registerKey.currentState!.validate()) {
-                  final username = _normalizeUsername(_registerUsername.text);
-                  final generatedEmail = _buildInternalEmail(username);
-                  debugPrint('Regisztráció: username=$username email=$generatedEmail');
-                  setState(() => _registerDone = true);
-                }
-              },
+              onPressed: _isSubmitting ? null : _handleRegister,
               style: ElevatedButton.styleFrom(
                 elevation: 0,
                 backgroundColor: const Color(0xFF80B8FF),
@@ -272,9 +378,9 @@ class _KulcskodAppState extends State<KulcskodApp> {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Text(
-                'Regisztráció',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              child: Text(
+                _isSubmitting ? 'Feldolgozás...' : 'Regisztráció',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
               ),
             ),
           ),
@@ -316,14 +422,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () {
-                if (_loginKey.currentState!.validate()) {
-                  final username = _normalizeUsername(_loginUsername.text);
-                  final generatedEmail = _buildInternalEmail(username);
-                  debugPrint('Bejelentkezés: username=$username email=$generatedEmail');
-                  setState(() => _loginDone = true);
-                }
-              },
+              onPressed: _isSubmitting ? null : _handleLogin,
               style: ElevatedButton.styleFrom(
                 elevation: 0,
                 backgroundColor: const Color(0xFF80B8FF),
@@ -333,9 +432,9 @@ class _KulcskodAppState extends State<KulcskodApp> {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Text(
-                'Bejelentkezés',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              child: Text(
+                _isSubmitting ? 'Feldolgozás...' : 'Bejelentkezés',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
               ),
             ),
           ),
@@ -452,6 +551,26 @@ class _KulcskodAppState extends State<KulcskodApp> {
         text,
         style: const TextStyle(
           color: _success,
+          fontWeight: FontWeight.w600,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  Widget _buildError(String text) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0x1AFF5A5A),
+        border: Border.all(color: const Color(0x40FF5A5A)),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Color(0xFFFFB5B5),
           fontWeight: FontWeight.w600,
         ),
         textAlign: TextAlign.center,
