@@ -228,10 +228,13 @@ class _BluchetAppState extends State<BluchetApp> {
 
   Future<void> _loadCurrentUser() async {
     try {
-      final userId = await _storage.read(key: 'bluchet_user_id');
+      // Older builds stored a plain profile UUID without a Supabase Auth
+      // session. That is not an authenticated identity, so discard it.
+      await _storage.delete(key: 'bluchet_user_id');
+      final user = Supabase.instance.client.auth.currentUser;
       if (!mounted) return;
       setState(() {
-        _currentUserId = userId;
+        _currentUserId = user?.id;
         _loading = false;
       });
     } catch (_) {
@@ -243,6 +246,11 @@ class _BluchetAppState extends State<BluchetApp> {
     }
   }
 
+  // The user only sees a username. Supabase Auth still receives a
+  // syntactically valid, non-deliverable internal address.
+  String _internalEmail(String username) =>
+      '${username.trim().toLowerCase()}@bluchet.invalid';
+
   Future<void> _login(String username, String password) async {
     if (!AppSecurity.isValidUsername(username)) {
       throw Exception(
@@ -253,16 +261,14 @@ class _BluchetAppState extends State<BluchetApp> {
       throw Exception('Password must be at least 6 characters.');
     }
 
-    final response = await Supabase.instance.client.rpc(
-      'login_user',
-      params: {'p_username': username.trim(), 'p_password': password},
+    final response = await Supabase.instance.client.auth.signInWithPassword(
+      email: _internalEmail(username),
+      password: password,
     );
-
-    final userId = response.toString();
-    if (userId.isEmpty || userId == 'null') {
-      throw Exception('Login did not return a valid user ID.');
+    final userId = response.user?.id;
+    if (userId == null) {
+      throw Exception('Login did not return a valid authenticated user.');
     }
-    await _storage.write(key: 'bluchet_user_id', value: userId);
 
     if (!mounted) return;
     setState(() => _currentUserId = userId);
@@ -278,22 +284,30 @@ class _BluchetAppState extends State<BluchetApp> {
       throw Exception('Password must be at least 6 characters.');
     }
 
-    final response = await Supabase.instance.client.rpc(
-      'register_user',
-      params: {'p_username': username.trim(), 'p_password': password},
+    final normalizedUsername = username.trim().toLowerCase();
+    final response = await Supabase.instance.client.auth.signUp(
+      email: _internalEmail(normalizedUsername),
+      password: password,
+      data: {'username': normalizedUsername},
     );
 
-    final userId = response.toString();
-    if (userId.isEmpty || userId == 'null') {
+    final userId = response.user?.id;
+    if (userId == null) {
       throw Exception('Registration did not return a valid user ID.');
     }
-    await _storage.write(key: 'bluchet_user_id', value: userId);
+    if (response.session == null) {
+      throw Exception(
+        'Registration succeeded, but Supabase requires email confirmation. '
+        'Disable Confirm email in Supabase Auth settings, then sign in.',
+      );
+    }
 
     if (!mounted) return;
     setState(() => _currentUserId = userId);
   }
 
   Future<void> _logout() async {
+    await Supabase.instance.client.auth.signOut();
     await _storage.delete(key: 'bluchet_user_id');
     if (!mounted) return;
     setState(() => _currentUserId = null);
@@ -423,10 +437,18 @@ class _AuthScreenState extends State<AuthScreen> {
                         shape: BoxShape.circle,
                         color: BluchetPalette.primary.withOpacity(0.15),
                       ),
-                      child: const Icon(
-                        Icons.chat_bubble_outline_rounded,
-                        size: 40,
-                        color: BluchetPalette.primary,
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/app_icon.png',
+                          width: 64,
+                          height: 64,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) => const Icon(
+                            Icons.image_not_supported_outlined,
+                            size: 40,
+                            color: BluchetPalette.primary,
+                          ),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -556,7 +578,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final List<dynamic> rows = await Supabase.instance.client
-          .from('profiles')
+          .from('user_directory')
           .select('id, username')
           .ilike('username', '%$cleaned%')
           .limit(10);
@@ -599,9 +621,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final response = await Supabase.instance.client.rpc(
-        'create_group_conversation',
+        'create_group_conversation_for_current_user',
         params: {
-          'p_actor_id': widget.currentUserId,
           'p_member_ids': memberIds,
           'p_title': groupTitle.isEmpty ? 'Group chat' : groupTitle,
         },
@@ -647,7 +668,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (memberIds.isEmpty) return const [];
 
     final profiles = await Supabase.instance.client
-        .from('profiles')
+        .from('user_directory')
         .select('id, username')
         .inFilter('id', memberIds);
 
@@ -742,18 +763,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 }
 
                 try {
-                  await Supabase.instance.client
-                      .from('conversation_participants')
-                      .insert(
-                        idsToInvite
-                            .map(
-                              (userId) => {
-                                'conversation_id': group.id,
-                                'user_id': userId,
-                              },
-                            )
-                            .toList(),
-                      );
+                  await Supabase.instance.client.rpc(
+                    'invite_users_to_group_for_current_user',
+                    params: {
+                      'p_conversation_id': group.id,
+                      'p_user_ids': idsToInvite,
+                    },
+                  );
                   await _refreshConversations();
                   if (!mounted) return;
                   if (dialogContext.mounted) Navigator.pop(dialogContext);
@@ -806,8 +822,7 @@ class _ChatScreenState extends State<ChatScreen> {
       // migration cannot prevent the conversation list itself from loading.
       try {
         final unreadResponse = await Supabase.instance.client.rpc(
-          'get_unread_counts_for_user',
-          params: {'p_actor_id': widget.currentUserId},
+          'get_unread_counts_for_current_user',
         );
         if (unreadResponse is List) {
           _unreadCounts
@@ -876,7 +891,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
         final otherUserId = otherParticipant['user_id'] as String;
         final profile = await Supabase.instance.client
-            .from('profiles')
+            .from('user_directory')
             .select('id, username')
             .eq('id', otherUserId)
             .maybeSingle();
@@ -936,11 +951,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }) async {
     try {
       final response = await Supabase.instance.client.rpc(
-        'get_or_create_direct_conversation_for_user',
-        params: {
-          'actor_id': widget.currentUserId,
-          'other_user': userId,
-        },
+        'get_or_create_direct_conversation_for_current_user',
+        params: {'other_user': userId},
       );
       final conversationId = response.toString();
 
@@ -969,11 +981,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final requestGeneration = ++_messageLoadGeneration;
     try {
       final response = await Supabase.instance.client.rpc(
-        'get_messages_for_user',
-        params: {
-          'p_actor_id': widget.currentUserId,
-          'p_conversation_id': conversationId,
-        },
+        'get_messages_for_current_user',
+        params: {'p_conversation_id': conversationId},
       );
       if (response is! List) {
         throw Exception('The message query returned an unexpected response.');
@@ -1010,11 +1019,8 @@ class _ChatScreenState extends State<ChatScreen> {
       // not hide messages or break sending/receiving.
       try {
         await Supabase.instance.client.rpc(
-          'mark_conversation_read_for_user',
-          params: {
-            'p_actor_id': widget.currentUserId,
-            'p_conversation_id': conversationId,
-          },
+          'mark_conversation_read_for_current_user',
+          params: {'p_conversation_id': conversationId},
         );
       } catch (_) {
         // The SQL migration may not have been applied yet.
@@ -1050,10 +1056,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       await Supabase.instance.client.rpc(
-        'insert_message_for_user',
+        'insert_message_for_current_user',
         params: {
-          // These names must exactly match the SQL function signature.
-          'p_actor_id': widget.currentUserId,
           'p_conversation_id': conversation.id,
           'p_ciphertext': text,
         },
@@ -1172,7 +1176,8 @@ class _ChatScreenState extends State<ChatScreen> {
                         children: [
                           for (final userId in _groupInviteIds)
                             Chip(
-                              backgroundColor: BluchetPalette.turquoise200,
+                              backgroundColor: BluchetPalette.turquoise800,
+                              side: const BorderSide(color: BluchetPalette.turquoise600),
                               label: Text(
                                 _searchResults
                                     .firstWhere(
@@ -1184,7 +1189,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                     )
                                     .username,
                                 style: const TextStyle(
-                                  color: BluchetPalette.text,
+                                  color: Color(0xFFFFFFFF),
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
                               onDeleted: () => _toggleGroupInvite(userId),
