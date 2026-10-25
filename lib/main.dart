@@ -83,33 +83,33 @@ class BluchetPalette {
   static const Color primaryDark = royalBlue900;
   static const Color accent = turquoise800;
   static const Color accentDark = turquoise900;
-  static const Color background = Color(0xFF123B40);
-  static const Color card = Color(0xFF16464A);
-  static const Color surface = Color(0xFF20575A);
-  static const Color text = Color(0xFFE2F8F5);
-  static const Color textMuted = Color(0xFFB0D5D2);
-  static const Color inputText = Color(0xFF12343A);
-  static const Color inputLabel = Color(0xFF24545A);
+  static const Color background = Color(0xFF15191B);
+  static const Color card = Color(0xFF202629);
+  static const Color surface = Color(0xFF293235);
+  static const Color text = Color(0xFFE8F0EF);
+  static const Color textMuted = Color(0xFFB2C0BE);
+  static const Color inputText = Color(0xFFF0F5F4);
+  static const Color inputLabel = Color(0xFFB0BFBC);
   static const Color success = Color(0xFF1A8A89);
   static const Color error = Color(0xFFB54C5D);
-  static const Color dangerSoft = Color(0xFFFDE7EC);
+  static const Color dangerSoft = Color(0xFF40272D);
 }
 
 class BluchetTheme {
   static ThemeData light() {
     final base = ThemeData(
       useMaterial3: true,
-      brightness: Brightness.light,
+      brightness: Brightness.dark,
       scaffoldBackgroundColor: BluchetPalette.background,
-      colorScheme: const ColorScheme.light(
+      colorScheme: const ColorScheme.dark(
         primary: BluchetPalette.primary,
         secondary: BluchetPalette.accent,
         surface: BluchetPalette.surface,
-        onPrimary: Color(0xFF103666),
-        onSecondary: Color(0xFF103666),
+        onPrimary: Color(0xFFF4F7F7),
+        onSecondary: Color(0xFFF4F7F7),
         onSurface: BluchetPalette.text,
       ),
-      textTheme: ThemeData.light().textTheme.apply(
+      textTheme: ThemeData.dark().textTheme.apply(
             bodyColor: BluchetPalette.text,
             displayColor: BluchetPalette.text,
           ),
@@ -118,7 +118,7 @@ class BluchetTheme {
     return base.copyWith(
       appBarTheme: const AppBarTheme(
         backgroundColor: BluchetPalette.primary,
-        foregroundColor: Color(0xFF103666),
+        foregroundColor: Color(0xFFF4F7F7),
         elevation: 0,
       ),
       cardTheme: CardThemeData(
@@ -130,7 +130,7 @@ class BluchetTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: const Color(0xFFEFF8FF),
+        fillColor: const Color(0xFF252D30),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide: const BorderSide(color: BluchetPalette.royalBlue200),
@@ -153,7 +153,7 @@ class BluchetTheme {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          foregroundColor: const Color(0xFF103666),
+          foregroundColor: const Color(0xFFF4F7F7),
           backgroundColor: BluchetPalette.accent,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           shape: RoundedRectangleBorder(
@@ -520,6 +520,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _error;
   List<_UserSearchResult> _searchResults = const [];
   List<_Conversation> _conversations = const [];
+  final Map<String, int> _unreadCounts = <String, int>{};
   _Conversation? _selectedConversation;
   List<_Message> _messages = const [];
   int _messageLoadGeneration = 0;
@@ -801,9 +802,31 @@ class _ChatScreenState extends State<ChatScreen> {
         return;
       }
 
+      // Fetch unread counts independently so a missing/unapplied unread SQL
+      // migration cannot prevent the conversation list itself from loading.
+      try {
+        final unreadResponse = await Supabase.instance.client.rpc(
+          'get_unread_counts_for_user',
+          params: {'p_actor_id': widget.currentUserId},
+        );
+        if (unreadResponse is List) {
+          _unreadCounts
+            ..clear()
+            ..addEntries(unreadResponse.map((item) {
+              final row = Map<String, dynamic>.from(item as Map);
+              return MapEntry(
+                row['conversation_id'].toString(),
+                int.tryParse(row['unread_count'].toString()) ?? 0,
+              );
+            }));
+        }
+      } catch (_) {
+        // Unread badges stay hidden until the SQL migration is installed.
+      }
+
       final List<dynamic> conversationRows = await Supabase.instance.client
           .from('conversations')
-          .select('id, title')
+          .select('id, title, is_direct')
           .inFilter('id', conversationIds);
 
       final conversationMap = <String, Map<String, dynamic>>{
@@ -817,7 +840,9 @@ class _ChatScreenState extends State<ChatScreen> {
         final conversationId = map['conversation_id'] as String;
         final meta = conversationMap[conversationId];
         final title = meta?['title'] as String?;
-        final isGroup = title != null && title.trim().isNotEmpty;
+        // Group/direct classification comes from the database flag, never
+        // from the title: direct chats can also have custom titles.
+        final isGroup = meta?['is_direct'] == false;
 
         if (isGroup) {
           final members = await _loadGroupMembers(conversationId);
@@ -978,7 +1003,22 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _messages = messages;
         _error = null;
+        _unreadCounts[conversationId] = 0;
       });
+
+      // Mark read for this user only. Failure to update the read marker must
+      // not hide messages or break sending/receiving.
+      try {
+        await Supabase.instance.client.rpc(
+          'mark_conversation_read_for_user',
+          params: {
+            'p_actor_id': widget.currentUserId,
+            'p_conversation_id': conversationId,
+          },
+        );
+      } catch (_) {
+        // The SQL migration may not have been applied yet.
+      }
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients &&
@@ -1249,14 +1289,14 @@ class _ChatScreenState extends State<ChatScreen> {
                           _selectedConversation?.id == conversation.id;
                       return ListTile(
                         selected: isSelected,
-                        selectedTileColor: BluchetPalette.turquoise800,
+                        selectedTileColor: const Color(0xFF303E40),
                         title: Text(
                           conversation.isGroup
                               ? conversation.title
                               : conversation.otherUsername,
                           style: TextStyle(
                             color: isSelected
-                                ? Colors.white
+                                ? const Color(0xFFE8F0EF)
                                 : BluchetPalette.text,
                           ),
                         ),
@@ -1267,14 +1307,29 @@ class _ChatScreenState extends State<ChatScreen> {
                           style:
                               const TextStyle(color: BluchetPalette.textMuted),
                         ),
-                        trailing: conversation.isGroup
-                            ? IconButton(
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if ((_unreadCounts[conversation.id] ?? 0) > 0)
+                              Container(
+                                width: 10,
+                                height: 10,
+                                margin: const EdgeInsets.only(right: 10),
+                                decoration: const BoxDecoration(
+                                  color: BluchetPalette.turquoise500,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                            if (conversation.isGroup)
+                              IconButton(
+                                tooltip: 'Invite members',
                                 icon: const Icon(Icons.person_add_alt_1),
                                 color: BluchetPalette.primaryDark,
                                 onPressed: () =>
                                     _inviteUsersToGroup(conversation),
-                              )
-                            : null,
+                              ),
+                          ],
+                        ),
                         onTap: () async {
                           setState(() {
                             _selectedConversation = conversation;
@@ -1408,8 +1463,8 @@ class _ConversationDetailView extends StatelessWidget {
                         constraints: const BoxConstraints(maxWidth: 620),
                         decoration: BoxDecoration(
                           color: isMine
-                              ? BluchetPalette.royalBlue800
-                              : BluchetPalette.turquoise800,
+                              ? const Color(0xFF293545)
+                              : const Color(0xFF293B3A),
                           borderRadius: BorderRadius.circular(16),
                         ),
                         child: Column(
@@ -1419,7 +1474,7 @@ class _ConversationDetailView extends StatelessWidget {
                             Text(
                               message.text,
                               style: const TextStyle(
-                                color: Colors.white,
+                                color: const Color(0xFFF0F5F4),
                                 fontSize: 15,
                               ),
                             ),
@@ -1427,7 +1482,7 @@ class _ConversationDetailView extends StatelessWidget {
                             Text(
                               time,
                               style: const TextStyle(
-                                color: Color(0xFFD0E8E5),
+                                color: const Color(0xFFB2C0BE),
                                 fontSize: 11,
                               ),
                             ),
