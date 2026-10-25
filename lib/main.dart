@@ -71,6 +71,30 @@ class AppSecurity {
   }
 }
 
+class BluchetStartupApp extends StatelessWidget {
+  final String message;
+
+  const BluchetStartupApp({super.key, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.redAccent),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class BluchetApp extends StatefulWidget {
   const BluchetApp({super.key});
 
@@ -366,6 +390,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _messageController = TextEditingController();
+  final TextEditingController _groupNameController = TextEditingController();
+  final Set<String> _groupInviteIds = <String>{};
 
   bool _loading = true;
   String? _error;
@@ -424,6 +450,201 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _toggleGroupInvite(String userId) {
+    setState(() {
+      if (_groupInviteIds.contains(userId)) {
+        _groupInviteIds.remove(userId);
+      } else {
+        _groupInviteIds.add(userId);
+      }
+    });
+  }
+
+  Future<void> _createGroupConversation() async {
+    if (_groupInviteIds.isEmpty) {
+      setState(() {
+        _error = 'Legalább 1 másik tag kell a csoporthoz.';
+      });
+      return;
+    }
+
+    try {
+      final memberIds = <String>{..._groupInviteIds, widget.currentUserId}.toList();
+
+      final conversationId = await Supabase.instance.client.rpc(
+        'create_group_conversation',
+        params: {
+          'p_actor_id': widget.currentUserId,
+          'p_member_ids': memberIds,
+          'p_title': _groupNameController.text.trim().isEmpty
+              ? 'Group chat'
+              : _groupNameController.text.trim(),
+        },
+      ) as String;
+
+      _groupNameController.clear();
+      _groupInviteIds.clear();
+
+      await _refreshConversations();
+
+      final newGroup = _Conversation(
+        id: conversationId,
+        otherUserId: widget.currentUserId,
+        otherUsername: 'Group',
+        isGroup: true,
+        title: _groupNameController.text.trim().isEmpty ? 'Group chat' : _groupNameController.text.trim(),
+        memberIds: memberIds,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _selectedConversation = newGroup;
+      });
+
+      await _loadMessages(conversationId);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  Future<void> _inviteUsersToGroup(_Conversation group) async {
+    final inviteIds = <String>{};
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Tagok meghívása'),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: _searchController,
+                      decoration: const InputDecoration(
+                        hintText: 'Keresés...',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (value) async {
+                        await _searchUsers(value);
+                        setDialogState(() {});
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      constraints: const BoxConstraints(maxHeight: 260),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _searchResults.length,
+                        itemBuilder: (context, index) {
+                          final result = _searchResults[index];
+                          if (result.userId == widget.currentUserId ||
+                              group.memberIds.contains(result.userId)) {
+                            return const SizedBox.shrink();
+                          }
+
+                          final selected = inviteIds.contains(result.userId);
+
+                          return ListTile(
+                            title: Text(result.username),
+                            trailing: Icon(
+                              selected ? Icons.check_circle : Icons.add_circle_outline,
+                              color: selected ? Colors.green : null,
+                            ),
+                            onTap: () {
+                              setDialogState(() {
+                                if (selected) {
+                                  inviteIds.remove(result.userId);
+                                } else {
+                                  inviteIds.add(result.userId);
+                                }
+                              });
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Mégse'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    final idsToInvite = inviteIds.toList();
+                    if (idsToInvite.isEmpty) {
+                      Navigator.pop(dialogContext);
+                      return;
+                    }
+
+                    final rows = idsToInvite
+                        .map(
+                          (userId) => {
+                            'conversation_id': group.id,
+                            'user_id': userId,
+                          },
+                        )
+                        .toList();
+
+                    await Supabase.instance.client
+                        .from('conversation_participants')
+                        .insert(rows);
+
+                    await _refreshConversations();
+
+                    if (!mounted) return;
+                    Navigator.pop(dialogContext);
+                    setState(() {
+                      _selectedConversation = group;
+                    });
+                  },
+                  child: const Text('Meghívás'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<List<_UserSearchResult>> _loadGroupMembers(String conversationId) async {
+    final List<dynamic> rows = await Supabase.instance.client
+        .from('conversation_participants')
+        .select('user_id')
+        .eq('conversation_id', conversationId);
+
+    final memberIds = rows
+        .map((item) => (item as Map<String, dynamic>)['user_id'] as String)
+        .toList();
+
+    if (memberIds.isEmpty) return const [];
+
+    final List<dynamic> profiles = await Supabase.instance.client
+        .from('profiles')
+        .select('id, username')
+        .in_('id', memberIds);
+
+    return profiles
+        .map((item) => item as Map<String, dynamic>)
+        .map(
+          (item) => _UserSearchResult(
+            userId: item['id'] as String,
+            username: item['username'] as String,
+          ),
+        )
+        .toList();
+  }
+
   Future<void> _refreshConversations() async {
     setState(() {
       _loading = true;
@@ -431,16 +652,59 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      final List<dynamic> rows = await Supabase.instance.client
+      final List<dynamic> participantRows = await Supabase.instance.client
           .from('conversation_participants')
           .select('conversation_id, user_id')
           .eq('user_id', widget.currentUserId);
 
+      final conversationIds = participantRows
+          .map((item) => (item as Map<String, dynamic>)['conversation_id'] as String)
+          .toList();
+
+      if (conversationIds.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _conversations = const [];
+          _selectedConversation = null;
+          _loading = false;
+        });
+        return;
+      }
+
+      final List<dynamic> conversationRows = await Supabase.instance.client
+          .from('conversations')
+          .select('id, title')
+          .in_('id', conversationIds);
+
+      final conversationMap = <String, Map<String, dynamic>>{
+        for (final row in conversationRows)
+          (row as Map<String, dynamic>)['id'] as String: row,
+      };
+
       final conversations = <_Conversation>[];
 
-      for (final item in rows) {
+      for (final item in participantRows) {
         final map = item as Map<String, dynamic>;
         final conversationId = map['conversation_id'] as String;
+
+        final meta = conversationMap[conversationId];
+        final title = meta?['title'] as String?;
+        final isGroup = title != null && title.trim().isNotEmpty;
+
+        if (isGroup) {
+          final members = await _loadGroupMembers(conversationId);
+          conversations.add(
+            _Conversation(
+              id: conversationId,
+              otherUserId: widget.currentUserId,
+              otherUsername: 'Group',
+              isGroup: true,
+              title: title,
+              memberIds: members.map((m) => m.userId).toList(),
+            ),
+          );
+          continue;
+        }
 
         final List<dynamic> participants = await Supabase.instance.client
             .from('conversation_participants')
@@ -622,6 +886,42 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: const Text('Bluchet'),
         actions: [
+          if (_selectedConversation != null && _selectedConversation!.isGroup)
+            IconButton(
+              onPressed: () async {
+                final members = await _loadGroupMembers(_selectedConversation!.id);
+                if (!mounted) return;
+
+                showDialog(
+                  context: context,
+                  builder: (context) {
+                    return AlertDialog(
+                      title: const Text('Csoport tagjai'),
+                      content: SizedBox(
+                        width: 320,
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: members.length,
+                          itemBuilder: (context, index) {
+                            final member = members[index];
+                            return ListTile(
+                              title: Text(member.username),
+                            );
+                          },
+                        ),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Bezárás'),
+                        ),
+                      ],
+                    );
+                  },
+                );
+              },
+              icon: const Icon(Icons.group),
+            ),
           IconButton(
             onPressed: () async {
               await widget.onLogout();
@@ -634,6 +934,54 @@ class _ChatScreenState extends State<ChatScreen> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _groupNameController,
+                              decoration: const InputDecoration(
+                                hintText: 'Csoport neve',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: _createGroupConversation,
+                            child: const Text('Csoport'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if (_groupInviteIds.isNotEmpty)
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final userId in _groupInviteIds)
+                              Chip(
+                                label: Text(
+                                  _searchResults
+                                      .firstWhere(
+                                        (r) => r.userId == userId,
+                                        orElse: () => _UserSearchResult(
+                                          userId: userId,
+                                          username: 'Tag',
+                                        ),
+                                      )
+                                      .username,
+                                ),
+                                onDeleted: () => _toggleGroupInvite(userId),
+                              ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ),
                 Padding(
                   padding: const EdgeInsets.all(12),
                   child: Row(
@@ -666,13 +1014,16 @@ class _ChatScreenState extends State<ChatScreen> {
                       itemCount: _searchResults.length,
                       itemBuilder: (context, index) {
                         final result = _searchResults[index];
+                        final isSelected = _groupInviteIds.contains(result.userId);
+
                         return ListTile(
                           title: Text(result.username),
+                          trailing: Icon(
+                            isSelected ? Icons.check_circle : Icons.add_circle_outline,
+                            color: isSelected ? Colors.green : null,
+                          ),
                           onTap: () {
-                            _openConversation(
-                              userId: result.userId,
-                              username: result.username,
-                            );
+                            _toggleGroupInvite(result.userId);
                           },
                         );
                       },
@@ -697,8 +1048,24 @@ class _ChatScreenState extends State<ChatScreen> {
 
                       return ListTile(
                         selected: isSelected,
-                        title: Text(conversation.otherUsername),
-                        subtitle: const Text('Direct chat'),
+                        title: Text(
+                          conversation.isGroup
+                              ? conversation.title
+                              : conversation.otherUsername,
+                        ),
+                        subtitle: Text(
+                          conversation.isGroup
+                              ? 'Csoport • ${conversation.memberIds.length} tag'
+                              : 'Direct chat',
+                        ),
+                        trailing: conversation.isGroup
+                            ? IconButton(
+                                icon: const Icon(Icons.person_add_alt_1),
+                                onPressed: () async {
+                                  await _inviteUsersToGroup(conversation);
+                                },
+                              )
+                            : null,
                         onTap: () async {
                           setState(() {
                             _selectedConversation = conversation;
@@ -761,7 +1128,9 @@ class _ConversationDetailView extends StatelessWidget {
           child: Align(
             alignment: Alignment.centerLeft,
             child: Text(
-              conversation.otherUsername,
+              conversation.isGroup
+                  ? conversation.title
+                  : conversation.otherUsername,
               style: const TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
@@ -960,7 +1329,11 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.conversation.otherUsername),
+        title: Text(
+          widget.conversation.isGroup
+              ? widget.conversation.title
+              : widget.conversation.otherUsername,
+        ),
       ),
       body: Column(
         children: [
@@ -1065,11 +1438,17 @@ class _Conversation {
   final String id;
   final String otherUserId;
   final String otherUsername;
+  final bool isGroup;
+  final String title;
+  final List<String> memberIds;
 
   const _Conversation({
     required this.id,
     required this.otherUserId,
     required this.otherUsername,
+    this.isGroup = false,
+    this.title = '',
+    this.memberIds = const [],
   });
 }
 
