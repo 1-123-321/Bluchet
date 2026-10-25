@@ -77,7 +77,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
       return 'A backend inicializálása sikertelen:\n${_friendly(widget.startupError!)}';
     }
 
-    return 'A backend készen áll.';
+    return '';
   }
 
   Future<void> _handleRegister() async {
@@ -319,25 +319,6 @@ class _KulcskodAppState extends State<KulcskodApp> {
                             letterSpacing: -0.8,
                           ),
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.03),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: Colors.white.withOpacity(0.08)),
-                          ),
-                          child: const Text(
-                            'Frontend demo',
-                            style: TextStyle(
-                              color: _muted,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
                       ],
                     ),
                   ),
@@ -390,7 +371,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
                         if (_selectedIndex == 2 && _messageError != null)
                           _buildError(_messageError!),
                         const SizedBox(height: 12),
-                        if (_selectedIndex == 0)
+                        if (_selectedIndex == 0 && _statusText.isNotEmpty)
                           _buildStatusCard(_statusText),
                       ],
                     ),
