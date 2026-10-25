@@ -79,6 +79,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
     final cleaned = _normalizeUsername(username);
     _selectedConversationUser = cleaned;
     _messageTo.text = cleaned;
+    if (mounted) setState(() {});
   }
 
   void _addLocalMessage(String username, String message) {
@@ -86,6 +87,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
     final list = _conversationHistory.putIfAbsent(cleaned, () => <String>[]);
     list.add(message);
     _selectedConversationUser = cleaned;
+    _messageTo.text = cleaned;
   }
 
   Future<void> _handleRegister() async {
@@ -518,146 +520,227 @@ class _KulcskodAppState extends State<KulcskodApp> {
     final conversationNames = _conversationHistory.keys.toList();
     final activeConversation =
         _selectedConversationUser ?? (conversationNames.isNotEmpty ? conversationNames.first : null);
+    final messages = activeConversation == null
+        ? <String>[]
+        : (_conversationHistory[activeConversation] ?? const <String>[]);
 
-    return Form(
-      key: _messageKey,
-      child: Column(
-        children: [
-          if (conversationNames.isNotEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.02),
-                border: Border.all(color: Colors.white.withOpacity(0.08)),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: conversationNames.map((name) {
-                  final selected = activeConversation == name;
-                  return ChoiceChip(
-                    label: Text(name),
-                    selected: selected,
-                    onSelected: (_) => _selectConversation(name),
-                    backgroundColor: Colors.white.withOpacity(0.02),
-                    selectedColor: const Color(0xFF80B8FF),
-                    labelStyle: TextStyle(
-                      color: selected ? const Color(0xFF04111D) : Colors.white,
-                      fontWeight: FontWeight.w600,
-                    ),
+    return SizedBox(
+      width: double.infinity,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.02),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
+        ),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final useSplitView = constraints.maxWidth >= 560;
+
+            return useSplitView
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 200,
+                        child: _buildConversationList(conversationNames, activeConversation),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _buildThreadView(activeConversation, messages),
+                      ),
+                    ],
+                  )
+                : Column(
+                    children: [
+                      _buildConversationList(conversationNames, activeConversation),
+                      const SizedBox(height: 12),
+                      _buildThreadView(activeConversation, messages),
+                    ],
                   );
-                }).toList(),
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildConversationList(List<String> conversationNames, String? activeConversation) {
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(8, 8, 8, 10),
+            child: Text(
+              'Csevegések',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 16,
               ),
             ),
-          if (activeConversation != null) ...[
-            const SizedBox(height: 16),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.02),
-                border: Border.all(color: Colors.white.withOpacity(0.08)),
-                borderRadius: BorderRadius.circular(12),
+          ),
+          if (conversationNames.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Text(
+                'Még nincs beszélgetésed.',
+                style: TextStyle(color: _muted),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Csevegés: $activeConversation',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
+            )
+          else
+            ...conversationNames.map((name) {
+              final selected = activeConversation == name;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => _selectConversation(name),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: selected ? const Color(0xFF80B8FF) : Colors.white.withOpacity(0.03),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: selected ? Colors.transparent : Colors.white.withOpacity(0.06),
+                      ),
+                    ),
+                    child: Text(
+                      name,
+                      style: TextStyle(
+                        color: selected ? const Color(0xFF04111D) : Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: _conversationHistory[activeConversation]!.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (context, index) {
-                      final message = _conversationHistory[activeConversation]![index];
-                      return Align(
-                        alignment: Alignment.centerLeft,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF1A2338),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: Colors.white.withOpacity(0.04)),
-                          ),
-                          child: Text(
-                            message,
-                            style: const TextStyle(color: Colors.white, fontSize: 14),
-                          ),
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildThreadView(String? activeConversation, List<String> messages) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          if (activeConversation == null)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18),
+              child: Text(
+                'Válassz ki egy csevegést a bal oldali listából.',
+                style: TextStyle(color: _muted),
+              ),
+            )
+          else ...[
+            Text(
+              'Csevegés: $activeConversation',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 18,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              constraints: const BoxConstraints(minHeight: 180, maxHeight: 260),
+              child: ListView.separated(
+                itemCount: messages.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final message = messages[index];
+                  final isMine = message.startsWith('Én: ');
+                  return Align(
+                    alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 360),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: isMine ? const Color(0xFF80B8FF) : const Color(0xFF1A2338),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        message,
+                        style: TextStyle(
+                          color: isMine ? const Color(0xFF04111D) : Colors.white,
+                          fontWeight: FontWeight.w500,
                         ),
-                      );
-                    },
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
+            _Field(
+              label: 'Címzett',
+              hint: 'username',
+              controller: _messageTo,
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Kötelező mező';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            _Field(
+              label: 'Tárgy',
+              hint: 'Üzenet tárgya',
+              controller: _messageSubject,
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Kötelező mező';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            _Field(
+              label: 'Üzenet',
+              hint: 'Írd ide az üzenetedet...',
+              controller: _messageBody,
+              maxLines: 4,
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Kötelező mező';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isSendingMessage ? null : _handleSendMessage,
+                style: ElevatedButton.styleFrom(
+                  elevation: 0,
+                  backgroundColor: const Color(0xFF80B8FF),
+                  foregroundColor: const Color(0xFF04111D),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                ],
+                ),
+                child: Text(
+                  _isSendingMessage ? 'Küldés...' : 'Üzenet elküldése',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
               ),
             ),
           ],
-          const SizedBox(height: 16),
-          _Field(
-            label: 'Címzett',
-            hint: 'username',
-            controller: _messageTo,
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return 'Kötelező mező';
-              }
-              return null;
-            },
-          ),
-          const SizedBox(height: 16),
-          _Field(
-            label: 'Tárgy',
-            hint: 'Üzenet tárgya',
-            controller: _messageSubject,
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return 'Kötelező mező';
-              }
-              return null;
-            },
-          ),
-          const SizedBox(height: 16),
-          _Field(
-            label: 'Üzenet',
-            hint: 'Írd ide az üzenetedet...',
-            controller: _messageBody,
-            maxLines: 6,
-            validator: (value) {
-              if (value == null || value.trim().isEmpty) {
-                return 'Kötelező mező';
-              }
-              return null;
-            },
-          ),
-          const SizedBox(height: 18),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _isSendingMessage ? null : _handleSendMessage,
-              style: ElevatedButton.styleFrom(
-                elevation: 0,
-                backgroundColor: const Color(0xFF80B8FF),
-                foregroundColor: const Color(0xFF04111D),
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: Text(
-                _isSendingMessage ? 'Küldés...' : 'Üzenet elküldése',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-              ),
-            ),
-          ),
         ],
       ),
     );
