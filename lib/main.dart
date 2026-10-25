@@ -21,18 +21,6 @@ String _normalizeUsername(String value) {
   return cleaned;
 }
 
-String _buildInternalEmail(String username) {
-  final safe = username
-      .trim()
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), '.');
-
-  final label = safe.isEmpty ? 'user' : safe;
-  // Use a reserved placeholder domain because Supabase rejects some synthetic
-  // domains like @test.com during auth validation.
-  return '$label@example.com';
-}
-
 class KulcskodApp extends StatefulWidget {
   final bool configured;
   final String? startupError;
@@ -85,7 +73,6 @@ class _KulcskodAppState extends State<KulcskodApp> {
   Future<void> _handleRegister() async {
     final username = _normalizeUsername(_registerUsername.text);
     final password = _registerPassword.text.trim();
-    final hiddenEmail = _buildInternalEmail(username);
 
     if (username.isEmpty || password.isEmpty) {
       setState(() {
@@ -102,20 +89,21 @@ class _KulcskodAppState extends State<KulcskodApp> {
     });
 
     try {
-      final authResponse = await db.auth.signUp(
-        email: hiddenEmail,
-        password: password,
-      );
-
+      // Email auth is disabled in Supabase for this project, so we avoid any
+      // generated email addresses entirely and create an anonymous auth session.
+      final authResponse = await db.auth.signInAnonymously();
       final user = authResponse.user;
-      if (user != null) {
-        await db.from('profiles').upsert({
-          'id': user.id,
-          'username': username,
-          'email': hiddenEmail,
-          'email_verified': user.emailConfirmedAt != null,
-        }).select();
+
+      if (user == null) {
+        throw Exception('A regisztráció sikertelen.');
       }
+
+      await db.from('profiles').upsert({
+        'id': user.id,
+        'username': username,
+        'email': null,
+        'email_verified': false,
+      }).select();
 
       if (!mounted) return;
 
@@ -143,7 +131,6 @@ class _KulcskodAppState extends State<KulcskodApp> {
   Future<void> _handleLogin() async {
     final username = _normalizeUsername(_loginUsername.text);
     final password = _loginPassword.text.trim();
-    final hiddenEmail = _buildInternalEmail(username);
 
     if (username.isEmpty || password.isEmpty) {
       setState(() {
@@ -160,10 +147,35 @@ class _KulcskodAppState extends State<KulcskodApp> {
     });
 
     try {
-      await db.auth.signInWithPassword(
-        email: hiddenEmail,
-        password: password,
-      );
+      final currentUser = db.auth.currentUser;
+      if (currentUser != null) {
+        final profile = await db
+            .from('profiles')
+            .select('id')
+            .eq('id', currentUser.id)
+            .eq('username', username)
+            .maybeSingle();
+
+        if (profile == null) {
+          throw Exception('A felhasználó nem található.');
+        }
+      } else {
+        final authResponse = await db.auth.signInAnonymously();
+        final user = authResponse.user;
+        if (user == null) {
+          throw Exception('A bejelentkezés sikertelen.');
+        }
+
+        final profile = await db
+            .from('profiles')
+            .select('id')
+            .eq('username', username)
+            .maybeSingle();
+
+        if (profile == null || profile['id'] != user.id) {
+          throw Exception('A felhasználó nem található.');
+        }
+      }
 
       if (!mounted) return;
 
