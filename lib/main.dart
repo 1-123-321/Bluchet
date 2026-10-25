@@ -58,6 +58,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
   String? _loginError;
   String? _messageError;
   String? _currentUserId;
+  String? _currentUsername;
   final Map<String, List<String>> _conversationHistory = {};
   String? _selectedConversationUser;
 
@@ -75,6 +76,99 @@ class _KulcskodAppState extends State<KulcskodApp> {
     return '';
   }
 
+  Future<String?> _fetchUsernameById(String userId) async {
+    final response = await db
+        .from('profiles')
+        .select('username')
+        .eq('id', userId)
+        .maybeSingle();
+
+    if (response == null) {
+      return null;
+    }
+
+    final username = response['username'];
+    return username is String ? username : null;
+  }
+
+  Future<void> _loadConversationHistory() async {
+    final currentUserId = _currentUserId;
+    if (currentUserId == null) {
+      return;
+    }
+
+    final conversationIdsResponse = await db
+        .from('conversation_participants')
+        .select('conversation_id')
+        .eq('user_id', currentUserId);
+
+    final conversations = <String, List<String>>{};
+
+    for (final row in conversationIdsResponse as List<dynamic>) {
+      final conversationId = row['conversation_id'] as String?;
+      if (conversationId == null || conversationId.isEmpty) {
+        continue;
+      }
+
+      final participantsResponse = await db
+          .from('conversation_participants')
+          .select('user_id')
+          .eq('conversation_id', conversationId);
+
+      String? peerUsername;
+      for (final participantRow in participantsResponse as List<dynamic>) {
+        final participantUserId = participantRow['user_id'] as String?;
+        if (participantUserId == null || participantUserId == currentUserId) {
+          continue;
+        }
+
+        peerUsername = await _fetchUsernameById(participantUserId) ?? peerUsername;
+      }
+
+      final peerName = peerUsername ?? 'ismeretlen';
+      final messagesResponse = await db
+          .from('messages')
+          .select('sender_id, ciphertext')
+          .eq('conversation_id', conversationId)
+          .order('created_at', ascending: true);
+
+      final messageList = <String>[];
+      for (final messageRow in messagesResponse as List<dynamic>) {
+        final senderId = messageRow['sender_id'] as String?;
+        final content = messageRow['ciphertext'] as String? ?? '';
+        final senderName = senderId == null ? 'ismeretlen' : (await _fetchUsernameById(senderId) ?? 'ismeretlen');
+
+        if (senderId == currentUserId) {
+          messageList.add('Én: $content');
+        } else {
+          messageList.add('$senderName: $content');
+        }
+      }
+
+      if (messageList.isNotEmpty) {
+        conversations[peerName] = messageList;
+      }
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _conversationHistory
+        ..clear()
+        ..addAll(conversations);
+
+      if (_conversationHistory.isNotEmpty) {
+        final first = _conversationHistory.keys.first;
+        _selectedConversationUser ??= first;
+        if (_selectedConversationUser != null && !_conversationHistory.containsKey(_selectedConversationUser)) {
+          _selectedConversationUser = first;
+        }
+      } else {
+        _selectedConversationUser = null;
+      }
+    });
+  }
+
   void _selectConversation(String username) {
     final cleaned = _normalizeUsername(username);
     _selectedConversationUser = cleaned;
@@ -88,6 +182,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
     list.add(message);
     _selectedConversationUser = cleaned;
     _messageTo.text = cleaned;
+    if (mounted) setState(() {});
   }
 
   Future<void> _handleRegister() async {
@@ -120,6 +215,8 @@ class _KulcskodAppState extends State<KulcskodApp> {
       }
 
       _currentUserId = userId;
+      _currentUsername = username;
+      await _loadConversationHistory();
 
       if (!mounted) return;
 
@@ -175,6 +272,8 @@ class _KulcskodAppState extends State<KulcskodApp> {
       }
 
       _currentUserId = userId;
+      _currentUsername = username;
+      await _loadConversationHistory();
 
       if (!mounted) return;
 
@@ -248,6 +347,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
       );
 
       _addLocalMessage(toUsername, 'Én: $body');
+      await _loadConversationHistory();
 
       if (!mounted) return;
 
