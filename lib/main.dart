@@ -393,7 +393,7 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final List<dynamic> rows = await Supabase.instance.client
           .from('profiles')
-          .select()
+          .select('id, username')
           .ilike('username', '%$cleaned%')
           .limit(10);
 
@@ -433,7 +433,7 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final List<dynamic> rows = await Supabase.instance.client
           .from('conversation_participants')
-          .select()
+          .select('conversation_id, user_id')
           .eq('user_id', widget.currentUserId);
 
       final conversations = <_Conversation>[];
@@ -444,7 +444,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
         final List<dynamic> participants = await Supabase.instance.client
             .from('conversation_participants')
-            .select()
+            .select('conversation_id, user_id')
             .eq('conversation_id', conversationId);
 
         Map<String, dynamic>? otherParticipant;
@@ -464,7 +464,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
         final profile = await Supabase.instance.client
             .from('profiles')
-            .select()
+            .select('id, username')
             .eq('id', otherUserId)
             .maybeSingle();
 
@@ -543,7 +543,7 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final List<dynamic> rows = await Supabase.instance.client
           .from('messages')
-          .select()
+          .select('id, conversation_id, sender_id, ciphertext, created_at')
           .eq('conversation_id', conversationId)
           .order('created_at', ascending: true);
 
@@ -883,7 +883,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
       final List<dynamic> rows = await Supabase.instance.client
           .from('messages')
-          .select()
+          .select('id, conversation_id, sender_id, ciphertext, created_at')
           .eq('conversation_id', widget.conversation.id)
           .order('created_at', ascending: true);
 
@@ -1002,7 +1002,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                             color: isMine
                                 ? const Color(0xFF4F8CFF)
                                 : const Color(0xFF171F33),
-                            borderRadius: BorderRadius.circular(14),
+                            borderRadius: BorderRadius.circular(12),
                           ),
                           child: Text(message.text),
                         ),
@@ -1046,54 +1046,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class BluchetStartupApp extends StatelessWidget {
-  final String message;
-
-  const BluchetStartupApp({
-    super.key,
-    required this.message,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      theme: ThemeData.dark(),
-      home: Scaffold(
-        backgroundColor: const Color(0xFF0B1020),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Card(
-              color: const Color(0xFF171F33),
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'Bluchet',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(message),
-                    const SizedBox(height: 16),
-                    const Text(
-                      'Set SUPABASE_URL and SUPABASE_ANON_KEY in your environment or .env file.',
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }
