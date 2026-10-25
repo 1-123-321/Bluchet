@@ -48,18 +48,22 @@ class _KulcskodAppState extends State<KulcskodApp> {
   final _messageTo = TextEditingController();
   final _messageSubject = TextEditingController();
   final _messageBody = TextEditingController();
+  final _userSearchController = TextEditingController();
 
   bool _registerDone = false;
   bool _loginDone = false;
   bool _messageDone = false;
   bool _isSubmitting = false;
   bool _isSendingMessage = false;
+  bool _isSearchingUsers = false;
   String? _registerError;
   String? _loginError;
   String? _messageError;
+  String? _userSearchError;
   String? _currentUserId;
   String? _currentUsername;
   final Map<String, List<String>> _conversationHistory = {};
+  final List<String> _userSearchResults = <String>[];
   String? _selectedConversationUser;
 
   bool get _isLoggedIn => _currentUserId != null;
@@ -166,6 +170,69 @@ class _KulcskodAppState extends State<KulcskodApp> {
       } else {
         _selectedConversationUser = null;
       }
+    });
+  }
+
+  Future<void> _handleUserSearch() async {
+    final query = _normalizeUsername(_userSearchController.text);
+    if (query.isEmpty) {
+      setState(() {
+        _userSearchResults.clear();
+        _userSearchError = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _isSearchingUsers = true;
+      _userSearchError = null;
+    });
+
+    try {
+      final response = await db
+          .from('profiles')
+          .select('username')
+          .ilike('username', '%$query%')
+          .order('username', ascending: true)
+          .limit(10);
+
+      final rows = response is List ? response : const <dynamic>[];
+      final usernames = <String>[];
+      for (final row in rows) {
+        if (row is Map) {
+          final username = row['username'];
+          if (username is String && username.isNotEmpty) {
+            usernames.add(_normalizeUsername(username));
+          }
+        }
+      }
+
+      setState(() {
+        _userSearchResults
+          ..clear()
+          ..addAll(usernames.where((user) => user != _currentUsername));
+      });
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      setState(() => _userSearchError = _friendly(e));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _userSearchError = _friendly(e));
+    } finally {
+      if (mounted) {
+        setState(() => _isSearchingUsers = false);
+      }
+    }
+  }
+
+  void _selectUserForMessage(String username) {
+    final cleaned = _normalizeUsername(username);
+    _messageTo.text = cleaned;
+    _selectedConversationUser = cleaned;
+    _userSearchController.text = cleaned;
+    setState(() {
+      _userSearchResults.clear();
+      _userSearchError = null;
     });
   }
 
@@ -379,6 +446,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
     _messageTo.dispose();
     _messageSubject.dispose();
     _messageBody.dispose();
+    _userSearchController.dispose();
     super.dispose();
   }
 
@@ -642,7 +710,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       SizedBox(
-                        width: 200,
+                        width: 220,
                         child: _buildConversationList(conversationNames, activeConversation),
                       ),
                       const SizedBox(width: 12),
@@ -783,6 +851,71 @@ class _KulcskodAppState extends State<KulcskodApp> {
                 },
               ),
             ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _Field(
+                    label: 'Felhasználó keresése',
+                    hint: 'username',
+                    controller: _userSearchController,
+                    onSubmitted: (_) => _handleUserSearch(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: _isSearchingUsers ? null : _handleUserSearch,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF80B8FF),
+                      foregroundColor: const Color(0xFF04111D),
+                    ),
+                    child: Text(_isSearchingUsers ? '...' : 'Keresés'),
+                  ),
+                ),
+              ],
+            ),
+            if (_userSearchError != null) ...[
+              const SizedBox(height: 8),
+              _buildError(_userSearchError!),
+            ],
+            if (_userSearchResults.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.02),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white.withOpacity(0.06)),
+                ),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _userSearchResults.map((user) {
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(8),
+                      onTap: () => _selectUserForMessage(user),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.04),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          user,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             _Field(
               label: 'Címzett',
@@ -973,6 +1106,7 @@ class _Field extends StatelessWidget {
   final bool obscure;
   final int maxLines;
   final String? Function(String?)? validator;
+  final void Function(String)? onSubmitted;
 
   const _Field({
     required this.label,
@@ -981,6 +1115,7 @@ class _Field extends StatelessWidget {
     this.obscure = false,
     this.maxLines = 1,
     this.validator,
+    this.onSubmitted,
   });
 
   @override
@@ -1002,59 +1137,33 @@ class _Field extends StatelessWidget {
           obscureText: obscure,
           maxLines: maxLines,
           validator: validator,
+          onFieldSubmitted: onSubmitted,
           decoration: InputDecoration(
             hintText: hint,
-            hintStyle: const TextStyle(
-              color: Color(0xFF9FB1C2),
-            ),
+            hintStyle: const TextStyle(color: Color(0xFF8193A8)),
             filled: true,
             fillColor: Colors.white.withOpacity(0.02),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Color(0xFF80B8FF)),
+              borderSide: const BorderSide(color: _blue),
             ),
             errorBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Colors.redAccent),
+              borderSide: const BorderSide(color: Color(0xFFFF5A5A)),
             ),
-            focusedErrorBorder: OutlineInputBorder(
+            border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Colors.redAccent),
+              borderSide: BorderSide(color: Colors.white.withOpacity(0.08)),
             ),
           ),
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 15,
-          ),
+          style: const TextStyle(color: Colors.white, fontSize: 15),
         ),
       ],
     );
-  }
-}
-
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  const url = String.fromEnvironment('SUPABASE_URL');
-  const key = String.fromEnvironment('SUPABASE_ANON_KEY');
-
-  if (url.isEmpty || key.isEmpty) {
-    runApp(const KulcskodApp(configured: false));
-    return;
-  }
-
-  try {
-    await Supabase.initialize(
-      url: url,
-      anonKey: key,
-    );
-    runApp(const KulcskodApp(configured: true));
-  } catch (e) {
-    runApp(KulcskodApp(startupError: e.toString()));
   }
 }
