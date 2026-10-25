@@ -531,6 +531,16 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _searchResults = const [];
       });
+
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ChatDetailPage(
+            conversation: conv,
+            currentUserId: widget.currentUserId,
+          ),
+        ),
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -702,11 +712,18 @@ class _ChatScreenState extends State<ChatScreen> {
                               selected: isSelected,
                               title: Text(conversation.otherUsername),
                               subtitle: const Text('Direct chat'),
-                              onTap: () async {
+                              onTap: () {
                                 setState(() {
                                   _selectedConversation = conversation;
                                 });
-                                await _loadMessages(conversation.id);
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => ChatDetailPage(
+                                      conversation: conversation,
+                                      currentUserId: widget.currentUserId,
+                                    ),
+                                  ),
+                                );
                               },
                             );
                           },
@@ -718,82 +735,217 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: _selectedConversation == null
                       ? const Center(child: Text('Select a conversation'))
-                      : Column(
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  _selectedConversation!.otherUsername,
-                                  style: const TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: ListView.builder(
-                                controller: _scrollController,
-                                itemCount: _messages.length,
-                                itemBuilder: (context, index) {
-                                  final message = _messages[index];
-                                  final isMine =
-                                      message.senderId == widget.currentUserId;
-
-                                  return Align(
-                                    alignment: isMine
-                                        ? Alignment.centerRight
-                                        : Alignment.centerLeft,
-                                    child: Container(
-                                      margin: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                        vertical: 6,
-                                      ),
-                                      padding: const EdgeInsets.all(12),
-                                      constraints: const BoxConstraints(
-                                        maxWidth: 420,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: isMine
-                                            ? const Color(0xFF4F8CFF)
-                                            : const Color(0xFF171F33),
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Text(message.text),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: TextField(
-                                      controller: _messageController,
-                                      onSubmitted: (_) => _sendMessage(),
-                                      decoration: const InputDecoration(
-                                        hintText: 'Type a message',
-                                        border: OutlineInputBorder(),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  IconButton(
-                                    onPressed: _sendMessage,
-                                    icon: const Icon(Icons.send),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
+                      : ChatDetailPage(
+                          conversation: _selectedConversation!,
+                          currentUserId: widget.currentUserId,
                         ),
                 ),
               ],
             ),
+    );
+  }
+}
+
+class ChatDetailPage extends StatefulWidget {
+  final _Conversation conversation;
+  final String currentUserId;
+
+  const ChatDetailPage({
+    super.key,
+    required this.conversation,
+    required this.currentUserId,
+  });
+
+  @override
+  State<ChatDetailPage> createState() => _ChatDetailPageState();
+}
+
+class _ChatDetailPageState extends State<ChatDetailPage> {
+  final ScrollController _scrollController = ScrollController();
+  final TextEditingController _messageController = TextEditingController();
+  List<_Message> _messages = const [];
+  String? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMessages();
+  }
+
+  Future<void> _loadMessages() async {
+    try {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+
+      final List<dynamic> rows = await Supabase.instance.client
+          .from('messages')
+          .select()
+          .eq('conversation_id', widget.conversation.id)
+          .order('created_at', ascending: true);
+
+      final messages = <_Message>[];
+      for (final item in rows) {
+        final map = item as Map<String, dynamic>;
+        messages.add(
+          _Message(
+            id: map['id'] as String,
+            senderId: map['sender_id'] as String,
+            text: (map['ciphertext'] ?? '') as String,
+            createdAt:
+                DateTime.tryParse(map['created_at'] ?? '') ?? DateTime.now(),
+          ),
+        );
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _messages = messages;
+        _loading = false;
+      });
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.jumpTo(
+            _scrollController.position.maxScrollExtent,
+          );
+        }
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _sendMessage() async {
+    final text = _messageController.text.trim();
+    if (text.isEmpty) {
+      return;
+    }
+
+    if (!AppSecurity.isValidMessage(text)) {
+      setState(() {
+        _error = 'Message is empty or too long.';
+      });
+      return;
+    }
+
+    try {
+      await Supabase.instance.client.rpc(
+        'insert_message_for_user',
+        params: {
+          'actor_id': widget.currentUserId,
+          'conversation_id': widget.conversation.id,
+          'ciphertext': text,
+        },
+      );
+
+      _messageController.clear();
+      await _loadMessages();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.conversation.otherUsername),
+      ),
+      body: Column(
+        children: [
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                _error!,
+                style: const TextStyle(color: Colors.redAccent),
+              ),
+            ),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    itemCount: _messages.length,
+                    itemBuilder: (context, index) {
+                      final message = _messages[index];
+                      final isMine = message.senderId == widget.currentUserId;
+
+                      return Align(
+                        alignment:
+                            isMine ? Alignment.centerRight : Alignment.centerLeft,
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(
+                            horizontal: 20,
+                            vertical: 6,
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          constraints: const BoxConstraints(
+                            maxWidth: 620,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isMine
+                                ? const Color(0xFF4F8CFF)
+                                : const Color(0xFF171F33),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Text(message.text),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _messageController,
+                      minLines: 1,
+                      maxLines: 5,
+                      onSubmitted: (_) => _sendMessage(),
+                      decoration: const InputDecoration(
+                        hintText: 'Type a message',
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 56,
+                    height: 56,
+                    child: IconButton(
+                      onPressed: _sendMessage,
+                      icon: const Icon(Icons.send),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
