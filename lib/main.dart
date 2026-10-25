@@ -58,6 +58,10 @@ class _KulcskodAppState extends State<KulcskodApp> {
   String? _loginError;
   String? _messageError;
   String? _currentUserId;
+  final Map<String, List<String>> _conversationHistory = {};
+  String? _selectedConversationUser;
+
+  bool get _isLoggedIn => _currentUserId != null;
 
   String get _statusText {
     if (!widget.configured) {
@@ -69,6 +73,19 @@ class _KulcskodAppState extends State<KulcskodApp> {
     }
 
     return '';
+  }
+
+  void _selectConversation(String username) {
+    final cleaned = _normalizeUsername(username);
+    _selectedConversationUser = cleaned;
+    _messageTo.text = cleaned;
+  }
+
+  void _addLocalMessage(String username, String message) {
+    final cleaned = _normalizeUsername(username);
+    final list = _conversationHistory.putIfAbsent(cleaned, () => <String>[]);
+    list.add(message);
+    _selectedConversationUser = cleaned;
   }
 
   Future<void> _handleRegister() async {
@@ -108,6 +125,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
         _registerDone = true;
         _registerUsername.clear();
         _registerPassword.clear();
+        _selectedIndex = 2;
       });
     } on AuthException catch (e) {
       if (!mounted) return;
@@ -162,6 +180,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
         _loginDone = true;
         _loginUsername.clear();
         _loginPassword.clear();
+        _selectedIndex = 2;
       });
     } on AuthException catch (e) {
       if (!mounted) return;
@@ -226,13 +245,15 @@ class _KulcskodAppState extends State<KulcskodApp> {
         },
       );
 
+      _addLocalMessage(toUsername, 'Én: $body');
+
       if (!mounted) return;
 
       setState(() {
         _messageDone = true;
-        _messageTo.clear();
-        _messageSubject.clear();
+        _messageTo.text = toUsername;
         _messageBody.clear();
+        _messageSubject.clear();
       });
     } on PostgrestException catch (e) {
       if (!mounted) return;
@@ -339,20 +360,24 @@ class _KulcskodAppState extends State<KulcskodApp> {
                                 onPressed: () => setState(() => _selectedIndex = 1),
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: _TabButton(
-                                label: 'Üzenet küldése',
-                                selected: _selectedIndex == 2,
-                                onPressed: () => setState(() => _selectedIndex = 2),
+                            if (_isLoggedIn) ...[
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _TabButton(
+                                  label: 'Üzenetek',
+                                  selected: _selectedIndex == 2,
+                                  onPressed: () => setState(() => _selectedIndex = 2),
+                                ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                         const SizedBox(height: 26),
                         if (_selectedIndex == 0) _buildRegisterForm(),
                         if (_selectedIndex == 1) _buildLoginForm(),
-                        if (_selectedIndex == 2) _buildMessageForm(),
+                        if (_selectedIndex == 2 && !_isLoggedIn)
+                          _buildLoginRequiredCard(),
+                        if (_selectedIndex == 2 && _isLoggedIn) _buildMessageForm(),
                         const SizedBox(height: 12),
                         if (_selectedIndex == 0 && _registerDone)
                           _buildSuccess('Sikeres regisztráció!'),
@@ -490,10 +515,93 @@ class _KulcskodAppState extends State<KulcskodApp> {
   }
 
   Widget _buildMessageForm() {
+    final conversationNames = _conversationHistory.keys.toList();
+    final activeConversation =
+        _selectedConversationUser ?? (conversationNames.isNotEmpty ? conversationNames.first : null);
+
     return Form(
       key: _messageKey,
       child: Column(
         children: [
+          if (conversationNames.isNotEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.02),
+                border: Border.all(color: Colors.white.withOpacity(0.08)),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: conversationNames.map((name) {
+                  final selected = activeConversation == name;
+                  return ChoiceChip(
+                    label: Text(name),
+                    selected: selected,
+                    onSelected: (_) => _selectConversation(name),
+                    backgroundColor: Colors.white.withOpacity(0.02),
+                    selectedColor: const Color(0xFF80B8FF),
+                    labelStyle: TextStyle(
+                      color: selected ? const Color(0xFF04111D) : Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          if (activeConversation != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.02),
+                border: Border.all(color: Colors.white.withOpacity(0.08)),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Csevegés: $activeConversation',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ListView.separated(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: _conversationHistory[activeConversation]!.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final message = _conversationHistory[activeConversation]![index];
+                      return Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1A2338),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.white.withOpacity(0.04)),
+                          ),
+                          child: Text(
+                            message,
+                            style: const TextStyle(color: Colors.white, fontSize: 14),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
           _Field(
             label: 'Címzett',
             hint: 'username',
@@ -570,6 +678,26 @@ class _KulcskodAppState extends State<KulcskodApp> {
           color: _muted,
           fontSize: 14,
           fontWeight: FontWeight.w500,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  Widget _buildLoginRequiredCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0x1AFF5A5A),
+        border: Border.all(color: const Color(0x40FF5A5A)),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: const Text(
+        'Előbb jelentkezz be, hogy üzenetet küldhess.',
+        style: TextStyle(
+          color: Color(0xFFFFB5B5),
+          fontWeight: FontWeight.w600,
         ),
         textAlign: TextAlign.center,
       ),
