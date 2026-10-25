@@ -531,16 +531,6 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _searchResults = const [];
       });
-
-      if (!mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => ChatDetailPage(
-            conversation: conv,
-            currentUserId: widget.currentUserId,
-          ),
-        ),
-      );
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -642,106 +632,217 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : Row(
+          : Column(
               children: [
-                SizedBox(
-                  width: 340,
-                  child: Column(
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
                     children: [
-                      Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _searchController,
-                                onChanged: _searchUsers,
-                                decoration: const InputDecoration(
-                                  hintText: 'Search user',
-                                  border: OutlineInputBorder(),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            IconButton(
-                              onPressed: () {
-                                _searchUsers(_searchController.text);
-                              },
-                              icon: const Icon(Icons.search),
-                            ),
-                          ],
+                      Expanded(
+                        child: TextField(
+                          controller: _searchController,
+                          onChanged: _searchUsers,
+                          decoration: const InputDecoration(
+                            hintText: 'Search user',
+                            border: OutlineInputBorder(),
+                          ),
                         ),
                       ),
-                      if (_searchResults.isNotEmpty)
-                        Container(
-                          constraints: const BoxConstraints(maxHeight: 160),
-                          child: ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: _searchResults.length,
-                            itemBuilder: (context, index) {
-                              final result = _searchResults[index];
-                              return ListTile(
-                                title: Text(result.username),
-                                onTap: () {
-                                  _openConversation(
-                                    userId: result.userId,
-                                    username: result.username,
-                                  );
-                                },
-                              );
-                            },
-                          ),
-                        ),
-                      if (_error != null)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: Text(
-                            _error!,
-                            style: const TextStyle(color: Colors.redAccent),
-                          ),
-                        ),
-                      Expanded(
-                        child: ListView.builder(
-                          itemCount: _conversations.length,
-                          itemBuilder: (context, index) {
-                            final conversation = _conversations[index];
-                            final isSelected =
-                                _selectedConversation?.id == conversation.id;
-
-                            return ListTile(
-                              selected: isSelected,
-                              title: Text(conversation.otherUsername),
-                              subtitle: const Text('Direct chat'),
-                              onTap: () {
-                                setState(() {
-                                  _selectedConversation = conversation;
-                                });
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => ChatDetailPage(
-                                      conversation: conversation,
-                                      currentUserId: widget.currentUserId,
-                                    ),
-                                  ),
-                                );
-                              },
-                            );
-                          },
-                        ),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        onPressed: () {
+                          _searchUsers(_searchController.text);
+                        },
+                        icon: const Icon(Icons.search),
                       ),
                     ],
+                  ),
+                ),
+                if (_searchResults.isNotEmpty)
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 180),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: _searchResults.length,
+                      itemBuilder: (context, index) {
+                        final result = _searchResults[index];
+                        return ListTile(
+                          title: Text(result.username),
+                          onTap: () {
+                            _openConversation(
+                              userId: result.userId,
+                              username: result.username,
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ),
+                SizedBox(
+                  height: 260,
+                  child: ListView.builder(
+                    itemCount: _conversations.length,
+                    itemBuilder: (context, index) {
+                      final conversation = _conversations[index];
+                      final isSelected =
+                          _selectedConversation?.id == conversation.id;
+
+                      return ListTile(
+                        selected: isSelected,
+                        title: Text(conversation.otherUsername),
+                        subtitle: const Text('Direct chat'),
+                        onTap: () async {
+                          setState(() {
+                            _selectedConversation = conversation;
+                          });
+                          await _loadMessages(conversation.id);
+                        },
+                      );
+                    },
                   ),
                 ),
                 Expanded(
                   child: _selectedConversation == null
                       ? const Center(child: Text('Select a conversation'))
-                      : ChatDetailPage(
+                      : _ConversationDetailView(
                           conversation: _selectedConversation!,
                           currentUserId: widget.currentUserId,
+                          scrollController: _scrollController,
+                          messageController: _messageController,
+                          messages: _messages,
+                          error: _error,
+                          onSend: _sendMessage,
+                          onRefresh: () => _loadMessages(
+                            _selectedConversation!.id,
+                          ),
                         ),
                 ),
               ],
             ),
+    );
+  }
+}
+
+class _ConversationDetailView extends StatelessWidget {
+  final _Conversation conversation;
+  final String currentUserId;
+  final ScrollController scrollController;
+  final TextEditingController messageController;
+  final List<_Message> messages;
+  final String? error;
+  final Future<void> Function() onSend;
+  final Future<void> Function() onRefresh;
+
+  const _ConversationDetailView({
+    required this.conversation,
+    required this.currentUserId,
+    required this.scrollController,
+    required this.messageController,
+    required this.messages,
+    required this.error,
+    required this.onSend,
+    required this.onRefresh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              conversation.otherUsername,
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              error!,
+              style: const TextStyle(color: Colors.redAccent),
+            ),
+          ),
+        Expanded(
+          child: ListView.builder(
+            controller: scrollController,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            itemCount: messages.length,
+            itemBuilder: (context, index) {
+              final message = messages[index];
+              final isMine = message.senderId == currentUserId;
+
+              return Align(
+                alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+                child: Container(
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
+                  padding: const EdgeInsets.all(12),
+                  constraints: const BoxConstraints(maxWidth: 620),
+                  decoration: BoxDecoration(
+                    color: isMine
+                        ? const Color(0xFF4F8CFF)
+                        : const Color(0xFF171F33),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(message.text),
+                ),
+              );
+            },
+          ),
+        ),
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: messageController,
+                    minLines: 1,
+                    maxLines: 5,
+                    onSubmitted: (_) => onSend(),
+                    decoration: const InputDecoration(
+                      hintText: 'Type a message',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: IconButton(
+                    onPressed: onSend,
+                    icon: const Icon(Icons.send),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
