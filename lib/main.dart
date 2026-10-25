@@ -83,11 +83,13 @@ class BluchetPalette {
   static const Color primaryDark = royalBlue900;
   static const Color accent = turquoise800;
   static const Color accentDark = turquoise900;
-  static const Color background = Color(0xFF0D3438);
+  static const Color background = Color(0xFF123B40);
   static const Color card = Color(0xFF16464A);
   static const Color surface = Color(0xFF20575A);
   static const Color text = Color(0xFFE2F8F5);
   static const Color textMuted = Color(0xFFB0D5D2);
+  static const Color inputText = Color(0xFF12343A);
+  static const Color inputLabel = Color(0xFF24545A);
   static const Color success = Color(0xFF1A8A89);
   static const Color error = Color(0xFFB54C5D);
   static const Color dangerSoft = Color(0xFFFDE7EC);
@@ -140,9 +142,14 @@ class BluchetTheme {
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide:
-              const BorderSide(color: BluchetPalette.primary, width: 2),
+              const BorderSide(color: BluchetPalette.accent, width: 2.5),
         ),
-        hintStyle: const TextStyle(color: BluchetPalette.textMuted),
+        hintStyle: const TextStyle(color: BluchetPalette.inputLabel),
+        labelStyle: const TextStyle(color: BluchetPalette.inputLabel),
+        floatingLabelStyle: const TextStyle(
+          color: BluchetPalette.accentDark,
+          fontWeight: FontWeight.w600,
+        ),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
@@ -434,12 +441,14 @@ class _AuthScreenState extends State<AuthScreen> {
                     const SizedBox(height: 24),
                     TextField(
                       controller: _usernameController,
+                      style: const TextStyle(color: BluchetPalette.inputText),
                       textInputAction: TextInputAction.next,
                       decoration: const InputDecoration(labelText: 'Username'),
                     ),
                     const SizedBox(height: 16),
                     TextField(
                       controller: _passwordController,
+                      style: const TextStyle(color: BluchetPalette.inputText),
                       obscureText: true,
                       onSubmitted: (_) => _submit(),
                       decoration: const InputDecoration(labelText: 'Password'),
@@ -669,6 +678,7 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 TextField(
                   controller: _searchController,
+                  style: const TextStyle(color: BluchetPalette.inputText),
                   decoration: const InputDecoration(
                     hintText: 'Search user...',
                     border: OutlineInputBorder(),
@@ -1096,6 +1106,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       Expanded(
                         child: TextField(
                           controller: _groupNameController,
+                          style: const TextStyle(color: BluchetPalette.inputText),
                           decoration: const InputDecoration(
                             hintText: 'Group name',
                             border: OutlineInputBorder(),
@@ -1149,6 +1160,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       Expanded(
                         child: TextField(
                           controller: _searchController,
+                          style: const TextStyle(color: BluchetPalette.inputText),
                           onChanged: _searchUsers,
                           decoration: const InputDecoration(
                             hintText: 'Search user',
@@ -1435,6 +1447,7 @@ class _ConversationDetailView extends StatelessWidget {
                 Expanded(
                   child: TextField(
                     controller: messageController,
+                    style: const TextStyle(color: BluchetPalette.inputText),
                     minLines: 1,
                     maxLines: 5,
                     onSubmitted: (_) => onSend(),
