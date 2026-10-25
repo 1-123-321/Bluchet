@@ -63,8 +63,10 @@ class _KulcskodAppState extends State<KulcskodApp> {
   bool _loginDone = false;
   bool _messageDone = false;
   bool _isSubmitting = false;
+  bool _isSendingMessage = false;
   String? _registerError;
   String? _loginError;
+  String? _messageError;
 
   String get _statusText {
     if (!widget.configured) {
@@ -180,6 +182,71 @@ class _KulcskodAppState extends State<KulcskodApp> {
     } finally {
       if (mounted) {
         setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  Future<void> _handleSendMessage() async {
+    final toUsername = _normalizeUsername(_messageTo.text);
+    final body = _messageBody.text.trim();
+    final currentUser = db.auth.currentUser;
+
+    if (currentUser == null) {
+      setState(() => _messageError = 'Előbb be kell jelentkezni.');
+      return;
+    }
+
+    if (toUsername.isEmpty || body.isEmpty) {
+      setState(() => _messageError = 'A címzett és az üzenet mező kötelező.');
+      return;
+    }
+
+    setState(() {
+      _isSendingMessage = true;
+      _messageError = null;
+      _messageDone = false;
+    });
+
+    try {
+      final profileResponse = await db
+          .from('profiles')
+          .select('id')
+          .eq('username', toUsername)
+          .maybeSingle();
+
+      if (profileResponse == null) {
+        throw Exception('A címzett felhasználó nem található.');
+      }
+
+      final targetUserId = profileResponse['id'] as String;
+      final conversationId = await db.rpc(
+        'get_or_create_direct_conversation',
+        params: {'other_user': targetUserId},
+      );
+
+      await db.from('messages').insert({
+        'conversation_id': conversationId,
+        'sender_id': currentUser.id,
+        'ciphertext': body,
+      });
+
+      if (!mounted) return;
+
+      setState(() {
+        _messageDone = true;
+        _messageTo.clear();
+        _messageSubject.clear();
+        _messageBody.clear();
+      });
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      setState(() => _messageError = _friendly(e));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _messageError = _friendly(e));
+    } finally {
+      if (mounted) {
+        setState(() => _isSendingMessage = false);
       }
     }
   }
@@ -320,6 +387,8 @@ class _KulcskodAppState extends State<KulcskodApp> {
                           _buildError(_loginError!),
                         if (_selectedIndex == 2 && _messageDone)
                           _buildSuccess('Az üzenet elküldve.'),
+                        if (_selectedIndex == 2 && _messageError != null)
+                          _buildError(_messageError!),
                         const SizedBox(height: 12),
                         if (_selectedIndex == 0)
                           _buildStatusCard(_statusText),
@@ -488,15 +557,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () {
-                if (_messageKey.currentState!.validate()) {
-                  final to = _normalizeUsername(_messageTo.text);
-                  final subject = _messageSubject.text.trim();
-                  final body = _messageBody.text.trim();
-                  debugPrint('Üzenet: to=$to subject=$subject body=$body');
-                  setState(() => _messageDone = true);
-                }
-              },
+              onPressed: _isSendingMessage ? null : _handleSendMessage,
               style: ElevatedButton.styleFrom(
                 elevation: 0,
                 backgroundColor: const Color(0xFF80B8FF),
@@ -506,9 +567,9 @@ class _KulcskodAppState extends State<KulcskodApp> {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              child: const Text(
-                'Üzenet elküldése',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              child: Text(
+                _isSendingMessage ? 'Küldés...' : 'Üzenet elküldése',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
               ),
             ),
           ),
