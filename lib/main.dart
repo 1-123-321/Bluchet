@@ -852,7 +852,7 @@ class _ChatScreenState extends State<ChatScreen> {
               otherUserId: widget.currentUserId,
               otherUsername: 'Group',
               isGroup: true,
-              title: title,
+              title: title ?? 'Group chat',
               memberIds: members.map((member) => member.userId).toList(),
             ),
           );
