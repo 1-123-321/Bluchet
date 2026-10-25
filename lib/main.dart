@@ -68,3 +68,90 @@ class KulcskodApp extends StatefulWidget {
   @override
   State<KulcskodApp> createState() => _KulcskodAppState();
 }
+
+class _KulcskodAppState extends State<KulcskodApp> {
+  @override
+  Widget build(BuildContext context) {
+    final hasStartupIssue = !widget.configured || widget.startupError != null;
+
+    return MaterialApp(
+      title: 'Bluchet',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: _blue,
+          brightness: Brightness.dark,
+        ),
+        scaffoldBackgroundColor: _background,
+        useMaterial3: true,
+      ),
+      home: Scaffold(
+        backgroundColor: _background,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: _panel,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: _blue.withOpacity(0.35),
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Bluchet',
+                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      if (hasStartupIssue) ...[
+                        Text(
+                          widget.startupError ?? 'Application is not configured.',
+                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            color: _muted,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            'Set SUPABASE_URL and SUPABASE_ANON_KEY in your build configuration to continue.',
+                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: _muted,
+                            ),
+                          ),
+                        ),
+                      ] else ...[
+                        Text(
+                          'Supabase is configured and the app is ready.',
+                          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                            color: _success,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
