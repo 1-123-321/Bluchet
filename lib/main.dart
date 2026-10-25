@@ -79,10 +79,10 @@ class BluchetPalette {
   static const Color royalBlue800 = Color(0xFF315DC8);
   static const Color royalBlue900 = Color(0xFF2347A7);
 
-  static const Color primary = turquoise700;
-  static const Color primaryDark = turquoise900;
-  static const Color accent = royalBlue700;
-  static const Color accentDark = royalBlue900;
+  static const Color primary = royalBlue700;
+  static const Color primaryDark = royalBlue900;
+  static const Color accent = turquoise600;
+  static const Color accentDark = turquoise900;
   static const Color background = Color(0xFFEEF9FF);
   static const Color card = Color(0xFFF5FCFF);
   static const Color surface = Color(0xFFE6F7FF);
@@ -998,12 +998,31 @@ class _ChatScreenState extends State<ChatScreen> {
                       title: const Text('Group members'),
                       content: SizedBox(
                         width: 320,
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: members.length,
-                          itemBuilder: (context, index) =>
-                              ListTile(title: Text(members[index].username)),
-                        ),
+                        child: members.isEmpty
+                            ? const Padding(
+                                padding: EdgeInsets.all(16),
+                                child: Text(
+                                  'No members found. Check Supabase access to conversation_participants and profiles.',
+                                ),
+                              )
+                            : ListView.separated(
+                                shrinkWrap: true,
+                                itemCount: members.length,
+                                separatorBuilder: (_, __) => const Divider(height: 1),
+                                itemBuilder: (context, index) => ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: BluchetPalette.turquoise100,
+                                    foregroundColor: BluchetPalette.primaryDark,
+                                    child: Text(members[index].username.isEmpty
+                                        ? '?'
+                                        : members[index].username[0].toUpperCase()),
+                                  ),
+                                  title: Text(members[index].username),
+                                  subtitle: members[index].userId == widget.currentUserId
+                                      ? const Text('You')
+                                      : null,
+                                ),
+                              ),
                       ),
                       actions: [
                         TextButton(
@@ -1118,21 +1137,38 @@ class _ChatScreenState extends State<ChatScreen> {
                         final isSelected =
                             _groupInviteIds.contains(result.userId);
                         return ListTile(
-                          title: Text(result.username),
-                          trailing: Icon(
-                            isSelected
-                                ? Icons.check_circle
-                                : Icons.add_circle_outline,
-                            color: isSelected
-                                ? BluchetPalette.primary
-                                : BluchetPalette.accent,
+                          leading: CircleAvatar(
+                            backgroundColor: BluchetPalette.royalBlue100,
+                            foregroundColor: BluchetPalette.primaryDark,
+                            child: Text(result.username.isEmpty
+                                ? '?'
+                                : result.username[0].toUpperCase()),
                           ),
-                          onTap: () {
-                            _toggleGroupInvite(result.userId);
-                          },
-                          onLongPress: () => _openConversation(
-                            userId: result.userId,
-                            username: result.username,
+                          title: Text(result.username),
+                          subtitle: const Text('Private chat or add to group'),
+                          trailing: Wrap(
+                            spacing: 2,
+                            children: [
+                              IconButton(
+                                tooltip: 'Open private chat',
+                                icon: const Icon(Icons.chat_bubble_outline),
+                                color: BluchetPalette.primary,
+                                onPressed: () => _openConversation(
+                                  userId: result.userId,
+                                  username: result.username,
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: isSelected ? 'Remove from group' : 'Add to group',
+                                icon: Icon(isSelected
+                                    ? Icons.check_circle
+                                    : Icons.group_add_outlined),
+                                color: isSelected
+                                    ? BluchetPalette.primary
+                                    : BluchetPalette.accentDark,
+                                onPressed: () => _toggleGroupInvite(result.userId),
+                              ),
+                            ],
                           ),
                         );
                       },
@@ -1265,39 +1301,83 @@ class _ConversationDetailView extends StatelessWidget {
             ),
           ),
         Expanded(
-          child: ListView.builder(
-            controller: scrollController,
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            itemCount: messages.length,
-            itemBuilder: (context, index) {
-              final message = messages[index];
-              final isMine = message.senderId == currentUserId;
-              return Align(
-                alignment:
-                    isMine ? Alignment.centerRight : Alignment.centerLeft,
-                child: Container(
-                  margin:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                  padding: const EdgeInsets.all(12),
-                  constraints: const BoxConstraints(maxWidth: 620),
-                  decoration: BoxDecoration(
-                    color: isMine
-                        ? BluchetPalette.primary
-                        : BluchetPalette.royalBlue100,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    message.text,
-                    style: TextStyle(
-                      color: isMine
-                          ? const Color(0xFF103666)
-                          : BluchetPalette.text,
+          child: messages.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.forum_outlined,
+                            size: 44, color: BluchetPalette.primary),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'No messages yet',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            color: BluchetPalette.text,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Send the first message below. If old messages should appear, check SELECT permissions on the Supabase messages table.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: BluchetPalette.textMuted),
+                        ),
+                      ],
                     ),
                   ),
+                )
+              : ListView.builder(
+                  controller: scrollController,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  itemCount: messages.length,
+                  itemBuilder: (context, index) {
+                    final message = messages[index];
+                    final isMine = message.senderId == currentUserId;
+                    final localTime = message.createdAt.toLocal();
+                    final time = '${localTime.hour.toString().padLeft(2, '0')}:${localTime.minute.toString().padLeft(2, '0')}';
+                    return Align(
+                      alignment: isMine
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 6),
+                        padding: const EdgeInsets.all(12),
+                        constraints: const BoxConstraints(maxWidth: 620),
+                        decoration: BoxDecoration(
+                          color: isMine
+                              ? BluchetPalette.royalBlue200
+                              : BluchetPalette.turquoise100,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              message.text,
+                              style: const TextStyle(
+                                color: BluchetPalette.text,
+                                fontSize: 15,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              time,
+                              style: const TextStyle(
+                                color: BluchetPalette.textMuted,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ),
         SafeArea(
           child: Padding(
