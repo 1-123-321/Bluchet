@@ -47,7 +47,7 @@ Future<void> main() async {
 }
 
 String _readEnv(String key) {
-  final fromDartDefine = const String.fromEnvironment(key, defaultValue: '');
+  final fromDartDefine = String.fromEnvironment(key, defaultValue: '');
   if (fromDartDefine.isNotEmpty) {
     return fromDartDefine;
   }
