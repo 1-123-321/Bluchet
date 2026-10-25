@@ -83,11 +83,11 @@ class BluchetPalette {
   static const Color primaryDark = royalBlue900;
   static const Color accent = turquoise800;
   static const Color accentDark = turquoise900;
-  static const Color background = Color(0xFFD2EFEC);
-  static const Color card = Color(0xFFE4F6F3);
-  static const Color surface = Color(0xFFC4E7E2);
-  static const Color text = Color(0xFF163E6D);
-  static const Color textMuted = Color(0xFF4A6788);
+  static const Color background = Color(0xFF0D3438);
+  static const Color card = Color(0xFF16464A);
+  static const Color surface = Color(0xFF20575A);
+  static const Color text = Color(0xFFE2F8F5);
+  static const Color textMuted = Color(0xFFB0D5D2);
   static const Color success = Color(0xFF1A8A89);
   static const Color error = Color(0xFFB54C5D);
   static const Color dangerSoft = Color(0xFFFDE7EC);
@@ -513,6 +513,7 @@ class _ChatScreenState extends State<ChatScreen> {
   List<_Conversation> _conversations = const [];
   _Conversation? _selectedConversation;
   List<_Message> _messages = const [];
+  int _messageLoadGeneration = 0;
 
   @override
   void initState() {
@@ -615,6 +616,8 @@ class _ChatScreenState extends State<ChatScreen> {
           title: title,
           memberIds: memberIds,
         );
+        _messages = const [];
+        _error = null;
       });
       await _loadMessages(conversationId);
     } catch (error) {
@@ -769,9 +772,12 @@ class _ChatScreenState extends State<ChatScreen> {
           .select('conversation_id, user_id')
           .eq('user_id', widget.currentUserId);
 
+      // A conversation may appear more than once in the participant query.
+      // Build a stable, unique list before fetching conversation metadata.
       final conversationIds = participantRows
           .map((item) =>
               (item as Map<String, dynamic>)['conversation_id'] as String)
+          .toSet()
           .toList();
 
       if (conversationIds.isEmpty) {
@@ -851,22 +857,32 @@ class _ChatScreenState extends State<ChatScreen> {
       }
 
       if (!mounted) return;
+      // Defensive de-duplication prevents repeated participant rows from
+      // creating duplicate entries in the chat list.
+      final uniqueConversations = <String, _Conversation>{
+        for (final conversation in conversations)
+          conversation.id: conversation,
+      }.values.toList();
       final previousSelectedId = _selectedConversation?.id;
-      final selectedStillExists = conversations.any(
+      final selectedStillExists = uniqueConversations.any(
         (conversation) => conversation.id == previousSelectedId,
       );
+      final nextSelected = selectedStillExists
+          ? uniqueConversations.firstWhere(
+              (conversation) => conversation.id == previousSelectedId,
+            )
+          : (uniqueConversations.isNotEmpty ? uniqueConversations.first : null);
+      final selectionChanged = nextSelected?.id != previousSelectedId;
       setState(() {
-        _conversations = conversations;
-        if (!selectedStillExists) {
-          _selectedConversation =
-              conversations.isNotEmpty ? conversations.first : null;
-        } else {
-          _selectedConversation = conversations.firstWhere(
-            (conversation) => conversation.id == previousSelectedId,
-          );
-        }
+        _conversations = uniqueConversations;
+        _selectedConversation = nextSelected;
+        if (selectionChanged) _messages = const [];
         _loading = false;
       });
+      if (selectionChanged) {
+        // Invalidate any pending response for the previous chat.
+        _messageLoadGeneration++;
+      }
 
       if (_selectedConversation != null) {
         await _loadMessages(_selectedConversation!.id);
@@ -901,6 +917,8 @@ class _ChatScreenState extends State<ChatScreen> {
           otherUserId: userId,
           otherUsername: username,
         );
+        _messages = const [];
+        _error = null;
         _searchController.clear();
         _searchResults = const [];
       });
@@ -911,6 +929,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadMessages(String conversationId) async {
+    // If the user switches chats while a request is in flight, ignore the
+    // older response so it cannot paint group messages into a private chat.
+    final requestGeneration = ++_messageLoadGeneration;
     try {
       final response = await Supabase.instance.client.rpc(
         'get_messages_for_user',
@@ -919,15 +940,17 @@ class _ChatScreenState extends State<ChatScreen> {
           'p_conversation_id': conversationId,
         },
       );
-      final List<dynamic> rows = response as List<dynamic>;
+      if (response is! List) {
+        throw Exception('The message query returned an unexpected response.');
+      }
 
       final messages = <_Message>[];
-      for (final item in rows) {
-        final map = item as Map<String, dynamic>;
+      for (final item in response) {
+        final map = Map<String, dynamic>.from(item as Map);
         messages.add(
           _Message(
-            id: map['id'] as String,
-            senderId: map['sender_id'] as String,
+            id: map['id'].toString(),
+            senderId: map['sender_id'].toString(),
             text: (map['ciphertext'] ?? '').toString(),
             createdAt: DateTime.tryParse(
                   (map['created_at'] ?? '').toString(),
@@ -937,18 +960,31 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       }
 
-      if (!mounted) return;
-      setState(() => _messages = messages);
+      if (!mounted ||
+          requestGeneration != _messageLoadGeneration ||
+          _selectedConversation?.id != conversationId) {
+        return;
+      }
+      setState(() {
+        _messages = messages;
+        _error = null;
+      });
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
+        if (_scrollController.hasClients &&
+            requestGeneration == _messageLoadGeneration &&
+            _selectedConversation?.id == conversationId) {
           _scrollController.jumpTo(
             _scrollController.position.maxScrollExtent,
           );
         }
       });
     } catch (error) {
-      _showError(error);
+      if (mounted &&
+          requestGeneration == _messageLoadGeneration &&
+          _selectedConversation?.id == conversationId) {
+        _showError(error);
+      }
     }
   }
 
@@ -966,10 +1002,10 @@ class _ChatScreenState extends State<ChatScreen> {
       await Supabase.instance.client.rpc(
         'insert_message_for_user',
         params: {
-          // Match the existing SQL function's actual parameter names.
-          'actor_id': widget.currentUserId,
-          'conversation_id': conversation.id,
-          'ciphertext': text,
+          // These names must exactly match the SQL function signature.
+          'p_actor_id': widget.currentUserId,
+          'p_conversation_id': conversation.id,
+          'p_ciphertext': text,
         },
       );
 
@@ -1201,12 +1237,16 @@ class _ChatScreenState extends State<ChatScreen> {
                           _selectedConversation?.id == conversation.id;
                       return ListTile(
                         selected: isSelected,
-                        selectedTileColor: BluchetPalette.royalBlue100,
+                        selectedTileColor: BluchetPalette.turquoise800,
                         title: Text(
                           conversation.isGroup
                               ? conversation.title
                               : conversation.otherUsername,
-                          style: const TextStyle(color: BluchetPalette.text),
+                          style: TextStyle(
+                            color: isSelected
+                                ? Colors.white
+                                : BluchetPalette.text,
+                          ),
                         ),
                         subtitle: Text(
                           conversation.isGroup
@@ -1224,7 +1264,11 @@ class _ChatScreenState extends State<ChatScreen> {
                               )
                             : null,
                         onTap: () async {
-                          setState(() => _selectedConversation = conversation);
+                          setState(() {
+                            _selectedConversation = conversation;
+                            _messages = const [];
+                            _error = null;
+                          });
                           await _loadMessages(conversation.id);
                         },
                       );
@@ -1352,8 +1396,8 @@ class _ConversationDetailView extends StatelessWidget {
                         constraints: const BoxConstraints(maxWidth: 620),
                         decoration: BoxDecoration(
                           color: isMine
-                              ? BluchetPalette.royalBlue200
-                              : BluchetPalette.turquoise100,
+                              ? BluchetPalette.royalBlue800
+                              : BluchetPalette.turquoise800,
                           borderRadius: BorderRadius.circular(16),
                         ),
                         child: Column(
@@ -1363,7 +1407,7 @@ class _ConversationDetailView extends StatelessWidget {
                             Text(
                               message.text,
                               style: const TextStyle(
-                                color: BluchetPalette.text,
+                                color: Colors.white,
                                 fontSize: 15,
                               ),
                             ),
@@ -1371,7 +1415,7 @@ class _ConversationDetailView extends StatelessWidget {
                             Text(
                               time,
                               style: const TextStyle(
-                                color: BluchetPalette.textMuted,
+                                color: Color(0xFFD0E8E5),
                                 fontSize: 11,
                               ),
                             ),
