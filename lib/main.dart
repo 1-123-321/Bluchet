@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -546,15 +548,29 @@ class _ChatScreenState extends State<ChatScreen> {
   _Conversation? _selectedConversation;
   List<_Message> _messages = const [];
   int _messageLoadGeneration = 0;
+  Timer? _messageRefreshTimer;
+  bool _pollingMessages = false;
 
   @override
   void initState() {
     super.initState();
     _refreshConversations();
+
+    // Poll only the currently open conversation. This makes incoming messages
+    // appear even when Realtime is not configured for the messages table.
+    _messageRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final conversationId = _selectedConversation?.id;
+      if (!mounted || conversationId == null || _pollingMessages) return;
+      _pollingMessages = true;
+      _loadMessages(conversationId, scrollToBottom: false).whenComplete(() {
+        _pollingMessages = false;
+      });
+    });
   }
 
   @override
   void dispose() {
+    _messageRefreshTimer?.cancel();
     _scrollController.dispose();
     _searchController.dispose();
     _messageController.dispose();
@@ -975,7 +991,10 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _loadMessages(String conversationId) async {
+  Future<void> _loadMessages(
+    String conversationId, {
+    bool scrollToBottom = true,
+  }) async {
     // If the user switches chats while a request is in flight, ignore the
     // older response so it cannot paint group messages into a private chat.
     final requestGeneration = ++_messageLoadGeneration;
@@ -1026,7 +1045,8 @@ class _ChatScreenState extends State<ChatScreen> {
         // The SQL migration may not have been applied yet.
       }
 
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (scrollToBottom) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
         if (_scrollController.hasClients &&
             requestGeneration == _messageLoadGeneration &&
             _selectedConversation?.id == conversationId) {
@@ -1034,7 +1054,8 @@ class _ChatScreenState extends State<ChatScreen> {
             _scrollController.position.maxScrollExtent,
           );
         }
-      });
+        });
+      }
     } catch (error) {
       if (mounted &&
           requestGeneration == _messageLoadGeneration &&
