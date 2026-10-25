@@ -57,6 +57,7 @@ class _KulcskodAppState extends State<KulcskodApp> {
   String? _registerError;
   String? _loginError;
   String? _messageError;
+  String? _currentUserId;
 
   String get _statusText {
     if (!widget.configured) {
@@ -89,21 +90,17 @@ class _KulcskodAppState extends State<KulcskodApp> {
     });
 
     try {
-      // Email auth is disabled in Supabase for this project, so we avoid any
-      // generated email addresses entirely and create an anonymous auth session.
-      final authResponse = await db.auth.signInAnonymously();
-      final user = authResponse.user;
+      final result = await db.rpc(
+        'register_user',
+        params: {'p_username': username, 'p_password': password},
+      );
 
-      if (user == null) {
+      final userId = result is String ? result : (result as Map?)?['user_id'] as String?;
+      if (userId == null || userId.isEmpty) {
         throw Exception('A regisztráció sikertelen.');
       }
 
-      await db.from('profiles').upsert({
-        'id': user.id,
-        'username': username,
-        'email': null,
-        'email_verified': false,
-      }).select();
+      _currentUserId = userId;
 
       if (!mounted) return;
 
@@ -147,35 +144,17 @@ class _KulcskodAppState extends State<KulcskodApp> {
     });
 
     try {
-      final currentUser = db.auth.currentUser;
-      if (currentUser != null) {
-        final profile = await db
-            .from('profiles')
-            .select('id')
-            .eq('id', currentUser.id)
-            .eq('username', username)
-            .maybeSingle();
+      final result = await db.rpc(
+        'login_user',
+        params: {'p_username': username, 'p_password': password},
+      );
 
-        if (profile == null) {
-          throw Exception('A felhasználó nem található.');
-        }
-      } else {
-        final authResponse = await db.auth.signInAnonymously();
-        final user = authResponse.user;
-        if (user == null) {
-          throw Exception('A bejelentkezés sikertelen.');
-        }
-
-        final profile = await db
-            .from('profiles')
-            .select('id')
-            .eq('username', username)
-            .maybeSingle();
-
-        if (profile == null || profile['id'] != user.id) {
-          throw Exception('A felhasználó nem található.');
-        }
+      final userId = result is String ? result : (result as Map?)?['user_id'] as String?;
+      if (userId == null || userId.isEmpty) {
+        throw Exception('A bejelentkezés sikertelen.');
       }
+
+      _currentUserId = userId;
 
       if (!mounted) return;
 
@@ -203,9 +182,9 @@ class _KulcskodAppState extends State<KulcskodApp> {
   Future<void> _handleSendMessage() async {
     final toUsername = _normalizeUsername(_messageTo.text);
     final body = _messageBody.text.trim();
-    final currentUser = db.auth.currentUser;
+    final currentUserId = _currentUserId;
 
-    if (currentUser == null) {
+    if (currentUserId == null) {
       setState(() => _messageError = 'Előbb be kell jelentkezni.');
       return;
     }
@@ -234,15 +213,18 @@ class _KulcskodAppState extends State<KulcskodApp> {
 
       final targetUserId = profileResponse['id'] as String;
       final conversationId = await db.rpc(
-        'get_or_create_direct_conversation',
-        params: {'other_user': targetUserId},
+        'get_or_create_direct_conversation_for_user',
+        params: {'actor_id': currentUserId, 'other_user': targetUserId},
       );
 
-      await db.from('messages').insert({
-        'conversation_id': conversationId,
-        'sender_id': currentUser.id,
-        'ciphertext': body,
-      });
+      await db.rpc(
+        'insert_message_for_user',
+        params: {
+          'actor_id': currentUserId,
+          'conversation_id': conversationId,
+          'ciphertext': body,
+        },
+      );
 
       if (!mounted) return;
 
