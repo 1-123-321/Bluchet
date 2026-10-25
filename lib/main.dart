@@ -28,7 +28,9 @@ String _buildInternalEmail(String username) {
       .replaceAll(RegExp(r'[^a-z0-9]+'), '.');
 
   final label = safe.isEmpty ? 'user' : safe;
-  return '$label@test.com';
+  // Use a reserved placeholder domain because Supabase rejects some synthetic
+  // domains like @test.com during auth validation.
+  return '$label@example.com';
 }
 
 class KulcskodApp extends StatefulWidget {
