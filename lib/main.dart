@@ -549,6 +549,9 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _loading = true;
   String? _error;
   List<_UserSearchResult> _searchResults = const [];
+  int _searchRequestGeneration = 0;
+  bool _searchingUsers = false;
+  String? _searchError;
   List<_Conversation> _conversations = const [];
   final Map<String, int> _unreadCounts = <String, int>{};
   _Conversation? _selectedConversation;
@@ -623,33 +626,71 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _searchUsers(String term) async {
+    // Every keystroke invalidates earlier requests. A slow response for an
+    // older term must never replace results for the latest term.
+    final requestGeneration = ++_searchRequestGeneration;
     final cleaned = term.trim();
-    if (cleaned.isEmpty) {
-      if (mounted) setState(() => _searchResults = const []);
+
+    if (cleaned.length < 2) {
+      if (!mounted) return;
+      setState(() {
+        _searchResults = const [];
+        _searchingUsers = false;
+        _searchError = cleaned.isEmpty ? null : 'Type at least 2 characters.';
+      });
       return;
     }
+
+    if (!mounted) return;
+    setState(() {
+      _searchingUsers = true;
+      _searchError = null;
+      _searchResults = const [];
+    });
 
     try {
       final response = await Supabase.instance.client.rpc(
         'search_profiles',
-        params: {'search_term': cleaned},
+        params: {'search_term': cleaned.toLowerCase()},
       );
-      final List<dynamic> rows = response as List<dynamic>;
 
-      final results = <_UserSearchResult>[];
-      for (final item in rows) {
-        final map = item as Map<String, dynamic>;
-        final userId = map['id'] as String;
-        final username = map['username'] as String;
-        if (userId != widget.currentUserId) {
-          results.add(_UserSearchResult(userId: userId, username: username));
-        }
+      if (!mounted || requestGeneration != _searchRequestGeneration) return;
+      if (response is! List) {
+        throw const FormatException('Unexpected search response.');
       }
 
-      if (!mounted) return;
-      setState(() => _searchResults = results);
+      final results = <_UserSearchResult>[];
+      final seenIds = <String>{};
+      for (final item in response) {
+        if (item is! Map) continue;
+        final userId = item['id']?.toString();
+        final username = item['username']?.toString().trim();
+        if (userId == null ||
+            username == null ||
+            username.isEmpty ||
+            userId == widget.currentUserId ||
+            !seenIds.add(userId)) {
+          continue;
+        }
+        results.add(_UserSearchResult(userId: userId, username: username));
+      }
+
+      if (!mounted || requestGeneration != _searchRequestGeneration) return;
+      setState(() {
+        _searchResults = results;
+        _searchingUsers = false;
+        _searchError = null;
+      });
     } catch (error) {
-      _showError(error);
+      if (!mounted || requestGeneration != _searchRequestGeneration) return;
+      setState(() {
+        _searchResults = const [];
+        _searchingUsers = false;
+        _searchError = 'User search failed. Check your connection and try again.';
+      });
+      // Keep the raw error available for debugging without exposing database
+      // details in the UI.
+      debugPrint('Bluchet user search failed: $error');
     }
   }
 
@@ -736,6 +777,9 @@ class _ChatScreenState extends State<ChatScreen> {
     final inviteIds = <String>{};
     _searchController.clear();
     _searchResults = const [];
+    _searchError = null;
+    _searchingUsers = false;
+    _searchRequestGeneration++;
 
     await showDialog<void>(
       context: context,
@@ -759,6 +803,27 @@ class _ChatScreenState extends State<ChatScreen> {
                     setDialogState(() {});
                   },
                 ),
+                if (_searchingUsers)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: LinearProgressIndicator(minHeight: 2),
+                  ),
+                if (_searchError != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      _searchError!,
+                      style: const TextStyle(color: BluchetPalette.error),
+                    ),
+                  ),
+                if (!_searchingUsers &&
+                    _searchError == null &&
+                    _searchController.text.trim().length >= 2 &&
+                    _searchResults.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text('No users found.'),
+                  ),
                 const SizedBox(height: 12),
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 260),
@@ -1123,6 +1188,9 @@ class _ChatScreenState extends State<ChatScreen> {
         _error = null;
         _searchController.clear();
         _searchResults = const [];
+        _searchError = null;
+        _searchingUsers = false;
+        _searchRequestGeneration++;
       });
       await _loadMessages(conversationId);
     } catch (error) {
@@ -1430,6 +1498,27 @@ class _ChatScreenState extends State<ChatScreen> {
                     ],
                   ),
                 ),
+                if (_searchingUsers)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    child: LinearProgressIndicator(minHeight: 2),
+                  ),
+                if (_searchError != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    child: Text(
+                      _searchError!,
+                      style: const TextStyle(color: BluchetPalette.error),
+                    ),
+                  ),
+                if (!_searchingUsers &&
+                    _searchError == null &&
+                    _searchController.text.trim().length >= 2 &&
+                    _searchResults.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    child: Text('No users found.'),
+                  ),
                 if (_searchResults.isNotEmpty)
                   ConstrainedBox(
                     constraints: const BoxConstraints(maxHeight: 180),
