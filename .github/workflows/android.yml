@@ -1,7 +1,7 @@
 name: Flutter Android APK
 
-on:
-workflow_dispatch:
+'on':
+workflow_dispatch: {}
 push:
 branches:
 - main
@@ -23,20 +23,20 @@ steps:
     run: flutter pub get
 
   - name: Verify Supabase secrets
+    shell: bash
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-    shell: bash
     run: |
       if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
-        echo "SUPABASE_URL or SUPABASE_ANON_KEY is missing."
+        echo "::error::SUPABASE_URL or SUPABASE_ANON_KEY is missing."
         exit 1
       fi
 
       case "$SUPABASE_URL" in
         https://*) ;;
         *)
-          echo "SUPABASE_URL must start with https://"
+          echo "::error::SUPABASE_URL must start with https://"
           exit 1
           ;;
       esac
@@ -44,17 +44,17 @@ steps:
       case "$SUPABASE_ANON_KEY" in
         sb_*) ;;
         *)
-          echo "SUPABASE_ANON_KEY has unexpected format."
+          echo "::error::SUPABASE_ANON_KEY has unexpected format."
           exit 1
           ;;
       esac
 
-      echo "Supabase secrets are present and valid."
+      echo "Supabase secrets verified."
 
   - name: Generate Android platform
     run: flutter create --platforms=android .
 
-  - name: Configure core library desugaring
+  - name: Configure Android desugaring
     shell: bash
     run: |
       python3 <<'PY'
@@ -67,73 +67,107 @@ steps:
           Path("android/app/build.gradle"),
       ]
 
-      file = next((p for p in candidates if p.is_file()), None)
+      gradle_file = next(
+          (path for path in candidates if path.is_file()),
+          None
+      )
 
-      if file is None:
-          print("ERROR: Android app Gradle file not found.")
+      if gradle_file is None:
+          print("::error::Android app Gradle file not found.")
           sys.exit(1)
 
-      text = file.read_text()
-      kotlin_dsl = file.suffix == ".kts"
+      content = gradle_file.read_text()
+      is_kotlin = gradle_file.suffix == ".kts"
 
-      # Enable desugaring inside compileOptions.
-      if "isCoreLibraryDesugaringEnabled" not in text and "coreLibraryDesugaringEnabled" not in text:
-          pattern = r"(?m)^([ \t]*)compileOptions[ \t]*\{"
-          match = re.search(pattern, text)
+      # Enable core library desugaring.
+      if not re.search(
+          r"\bisCoreLibraryDesugaringEnabled\b|\bcoreLibraryDesugaringEnabled\b",
+          content
+      ):
+          match = re.search(
+              r"(?m)^([ \t]*)compileOptions[ \t]*\{",
+              content
+          )
 
           if not match:
-              print("ERROR: compileOptions block not found.")
-              print(text)
+              print("::error::compileOptions block not found.")
               sys.exit(1)
 
           indent = match.group(1) + "    "
           setting = (
               "isCoreLibraryDesugaringEnabled = true"
-              if kotlin_dsl else
-              "coreLibraryDesugaringEnabled true"
+              if is_kotlin
+              else "coreLibraryDesugaringEnabled true"
           )
-          pos = match.end()
-          text = text[:pos] + "\n" + indent + setting + text[pos:]
 
-      # Add the dependency inside the app module's dependencies block.
-      if "desugar_jdk_libs" not in text:
-          pattern = r"(?m)^([ \t]*)dependencies[ \t]*\{"
-          match = re.search(pattern, text)
+          position = match.end()
+          content = (
+              content[:position]
+              + "\n" + indent + setting
+              + content[position:]
+          )
+
+      # Add the actual dependency.
+      if "desugar_jdk_libs" not in content:
+          match = re.search(
+              r"(?m)^([ \t]*)dependencies[ \t]*\{",
+              content
+          )
 
           if not match:
-              print("ERROR: dependencies block not found.")
-              print(text)
+              print("::error::dependencies block not found.")
               sys.exit(1)
 
           indent = match.group(1) + "    "
           dependency = (
               'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
-              if kotlin_dsl else
-              'coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"'
+              if is_kotlin
+              else 'coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"'
           )
-          pos = match.end()
-          text = text[:pos] + "\n" + indent + dependency + text[pos:]
 
-      file.write_text(text)
+          position = match.end()
+          content = (
+              content[:position]
+              + "\n" + indent + dependency
+              + content[position:]
+          )
 
-      print(f"Updated {file}")
-      print("Checking desugaring configuration...")
+      gradle_file.write_text(content)
 
-      if "desugar_jdk_libs:2.1.4" not in file.read_text():
-          print("ERROR: Desugaring dependency was not added.")
+      print(f"Updated {gradle_file}")
+      print("Desugaring configuration:")
+      print(content)
+
+      if "desugar_jdk_libs" not in content:
+          print("::error::Desugaring dependency is missing.")
           sys.exit(1)
 
-      print("Desugaring configuration is present.")
+      if not re.search(
+          r"\bisCoreLibraryDesugaringEnabled\b|\bcoreLibraryDesugaringEnabled\b",
+          content
+      ):
+          print("::error::Desugaring is not enabled.")
+          sys.exit(1)
+
+      print("Desugaring configuration verified.")
       PY
 
   - name: Generate Launcher Icons
     run: dart run flutter_launcher_icons
 
-  - name: Build APK
-    run: flutter build apk --release --dart-define=SUPABASE_URL="${{ secrets.SUPABASE_URL }}" --dart-define=SUPABASE_ANON_KEY="${{ secrets.SUPABASE_ANON_KEY }}"
+  - name: Build Release APK
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+    run: |
+      flutter build apk --release \
+        --dart-define="SUPABASE_URL=${SUPABASE_URL}" \
+        --dart-define="SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}"
 
   - name: Upload APK
     uses: actions/upload-artifact@v4
     with:
       name: kulcskod-apk
       path: build/app/outputs/flutter-apk/app-release.apk
+      if-no-files-found: error
+      retention-days: 7
