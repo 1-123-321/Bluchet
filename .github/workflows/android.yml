@@ -1,10 +1,13 @@
-name: Flutter Android APK
+name: Flutter Android APK and Release
 
 'on':
-workflow_dispatch: {}
+workflow_dispatch:
 push:
 branches:
 - main
+
+permissions:
+contents: write
 
 jobs:
 build:
@@ -13,6 +16,8 @@ runs-on: ubuntu-latest
 steps:
   - name: Checkout
     uses: actions/checkout@v4
+    with:
+      fetch-depth: 0
 
   - name: Install Flutter
     uses: subosito/flutter-action@v2
@@ -29,7 +34,7 @@ steps:
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
     run: |
       if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
-        echo "::error::SUPABASE_URL or SUPABASE_ANON_KEY is missing."
+        echo "::error::Missing Supabase secrets."
         exit 1
       fi
 
@@ -44,17 +49,15 @@ steps:
       case "$SUPABASE_ANON_KEY" in
         sb_*) ;;
         *)
-          echo "::error::SUPABASE_ANON_KEY has unexpected format."
+          echo "::error::Unexpected Supabase key format."
           exit 1
           ;;
       esac
 
-      echo "Supabase secrets verified."
-
   - name: Generate Android platform
     run: flutter create --platforms=android .
 
-  - name: Configure Android desugaring
+  - name: Configure core library desugaring
     shell: bash
     run: |
       python3 <<'PY'
@@ -67,89 +70,65 @@ steps:
           Path("android/app/build.gradle"),
       ]
 
-      gradle_file = next(
-          (path for path in candidates if path.is_file()),
-          None
-      )
+      path = next((p for p in candidates if p.is_file()), None)
 
-      if gradle_file is None:
-          print("::error::Android app Gradle file not found.")
+      if path is None:
+          print("::error::Android Gradle file not found.")
           sys.exit(1)
 
-      content = gradle_file.read_text()
-      is_kotlin = gradle_file.suffix == ".kts"
+      text = path.read_text()
+      kotlin = path.suffix == ".kts"
 
-      # Enable core library desugaring.
+      # Find the android block and its compileOptions block.
+      android_match = re.search(r"\bandroid\s*\{", text)
+      if not android_match:
+          print("::error::Android block not found.")
+          sys.exit(1)
+
+      compile_match = re.search(
+          r"\bcompileOptions\s*\{", text[android_match.end():]
+      )
+
+      if not compile_match:
+          print("::error::compileOptions block not found.")
+          sys.exit(1)
+
+      compile_pos = android_match.end() + compile_match.end()
+      setting = (
+          "isCoreLibraryDesugaringEnabled = true"
+          if kotlin else "coreLibraryDesugaringEnabled true"
+      )
+
+      # Only insert the setting if it is not already present.
       if not re.search(
           r"\bisCoreLibraryDesugaringEnabled\b|\bcoreLibraryDesugaringEnabled\b",
-          content
+          text
       ):
-          match = re.search(
-              r"(?m)^([ \t]*)compileOptions[ \t]*\{",
-              content
-          )
+          text = text[:compile_pos] + "\n        " + setting + text[compile_pos:]
 
-          if not match:
-              print("::error::compileOptions block not found.")
-              sys.exit(1)
-
-          indent = match.group(1) + "    "
-          setting = (
-              "isCoreLibraryDesugaringEnabled = true"
-              if is_kotlin
-              else "coreLibraryDesugaringEnabled true"
-          )
-
-          position = match.end()
-          content = (
-              content[:position]
-              + "\n" + indent + setting
-              + content[position:]
-          )
-
-      # Add the actual dependency.
-      if "desugar_jdk_libs" not in content:
-          match = re.search(
-              r"(?m)^([ \t]*)dependencies[ \t]*\{",
-              content
-          )
-
-          if not match:
+      # Insert the dependency into the app module's dependencies block.
+      if "desugar_jdk_libs" not in text:
+          dep_match = re.search(r"\bdependencies\s*\{", text)
+          if not dep_match:
               print("::error::dependencies block not found.")
               sys.exit(1)
 
-          indent = match.group(1) + "    "
           dependency = (
               'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
-              if is_kotlin
-              else 'coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"'
+              if kotlin else
+              'coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"'
           )
 
-          position = match.end()
-          content = (
-              content[:position]
-              + "\n" + indent + dependency
-              + content[position:]
-          )
+          pos = dep_match.end()
+          text = text[:pos] + "\n    " + dependency + text[pos:]
 
-      gradle_file.write_text(content)
+      path.write_text(text)
 
-      print(f"Updated {gradle_file}")
-      print("Desugaring configuration:")
-      print(content)
-
-      if "desugar_jdk_libs" not in content:
+      if "desugar_jdk_libs" not in text:
           print("::error::Desugaring dependency is missing.")
           sys.exit(1)
 
-      if not re.search(
-          r"\bisCoreLibraryDesugaringEnabled\b|\bcoreLibraryDesugaringEnabled\b",
-          content
-      ):
-          print("::error::Desugaring is not enabled.")
-          sys.exit(1)
-
-      print("Desugaring configuration verified.")
+      print(f"Configured desugaring in {path}")
       PY
 
   - name: Generate Launcher Icons
@@ -164,10 +143,30 @@ steps:
         --dart-define="SUPABASE_URL=${SUPABASE_URL}" \
         --dart-define="SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}"
 
-  - name: Upload APK
-    uses: actions/upload-artifact@v4
-    with:
-      name: kulcskod-apk
-      path: build/app/outputs/flutter-apk/app-release.apk
-      if-no-files-found: error
-      retention-days: 7
+  - name: Set release version
+    id: release_version
+    shell: bash
+    run: |
+      VERSION=$(grep -E '^version:' pubspec.yaml | head -1 | awk '{print $2}' | tr '+' '-')
+      if [ -z "$VERSION" ]; then
+        VERSION="1.0.0"
+      fi
+
+      TAG="v${VERSION}-build-${GITHUB_RUN_NUMBER}"
+      echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      echo "name=KulcsKod ${VERSION} (build ${GITHUB_RUN_NUMBER})" >> "$GITHUB_OUTPUT"
+
+  - name: Create GitHub Release and upload APK
+    env:
+      GH_TOKEN: ${{ github.token }}
+    run: |
+      gh release create "${{ steps.release_version.outputs.tag }}" \
+        "build/app/outputs/flutter-apk/app-release.apk#KulcsKod-Android.apk" \
+        --title "${{ steps.release_version.outputs.name }}" \
+        --notes "Automatikus Android APK-build.
+
+      Commit: ${GITHUB_SHA}
+      Build: ${GITHUB_RUN_NUMBER}
+
+      Az APK közvetlenül a Release Assets részéből tölthető le." \
+        --target "${GITHUB_SHA}"
