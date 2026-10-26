@@ -466,31 +466,10 @@ class _AuthScreenState extends State<AuthScreen> {
                           width: 48,
                           height: 48,
                           fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) => SizedBox(
-                            width: 48,
-                            height: 48,
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                Icon(
-                                  Icons.chat_bubble_rounded,
-                                  size: 43,
-                                  color: BluchetPalette.turquoise500,
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 4),
-                                  child: Text(
-                                    'B',
-                                    style: TextStyle(
-                                      color: BluchetPalette.background,
-                                      fontSize: 27,
-                                      fontWeight: FontWeight.w900,
-                                      height: 1,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
+                          errorBuilder: (context, error, stackTrace) => const Icon(
+                            Icons.image_not_supported_outlined,
+                            size: 30,
+                            color: BluchetPalette.primary,
                           ),
                         ),
                       ),
@@ -561,272 +540,6 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 }
 
-class _ProfileDialog extends StatefulWidget {
-  final String initialUsername;
-  final Future<void> Function(String username) onSaveUsername;
-  final Future<void> Function(String password) onSavePassword;
-
-  const _ProfileDialog({
-    required this.initialUsername,
-    required this.onSaveUsername,
-    required this.onSavePassword,
-  });
-
-  @override
-  State<_ProfileDialog> createState() => _ProfileDialogState();
-}
-
-class _ProfileDialogState extends State<_ProfileDialog> {
-  late final TextEditingController _usernameController;
-  final _currentPasswordController = TextEditingController();
-  final _newPasswordController = TextEditingController();
-  final _confirmPasswordController = TextEditingController();
-  bool _savingUsername = false;
-  bool _savingPassword = false;
-  bool _showCurrentPassword = false;
-  bool _showNewPassword = false;
-  String? _usernameMessage;
-  String? _passwordMessage;
-
-  @override
-  void initState() {
-    super.initState();
-    _usernameController = TextEditingController(text: widget.initialUsername);
-  }
-
-  @override
-  void dispose() {
-    _usernameController.dispose();
-    _currentPasswordController.dispose();
-    _newPasswordController.dispose();
-    _confirmPasswordController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _saveUsername() async {
-    final username = _usernameController.text.trim().toLowerCase();
-    if (!AppSecurity.isValidUsername(username)) {
-      setState(() => _usernameMessage =
-          'A felhasználónév 3–24 karakter lehet: kisbetű, szám és _.');
-      return;
-    }
-    setState(() {
-      _savingUsername = true;
-      _usernameMessage = null;
-    });
-    try {
-      await widget.onSaveUsername(username);
-      if (!mounted) return;
-      setState(() {
-        _usernameMessage = 'A felhasználónév módosítása sikerült.';
-        _savingUsername = false;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _usernameMessage = _friendlyError(error);
-        _savingUsername = false;
-      });
-    }
-  }
-
-  String _friendlyError(Object error) {
-    final text = error.toString();
-    if (text.toLowerCase().contains('already') ||
-        text.toLowerCase().contains('duplicate') ||
-        text.toLowerCase().contains('foglalt')) {
-      return 'Ez a felhasználónév már foglalt.';
-    }
-    return text.replaceFirst('Exception: ', '');
-  }
-
-  Future<void> _savePassword() async {
-    final current = _currentPasswordController.text;
-    final next = _newPasswordController.text;
-    final confirm = _confirmPasswordController.text;
-    if (current.isEmpty) {
-      setState(() => _passwordMessage = 'Add meg a jelenlegi jelszavadat.');
-      return;
-    }
-    if (!AppSecurity.isValidPassword(next)) {
-      setState(() => _passwordMessage =
-          'Az új jelszónak legalább 6 karakter hosszúnak kell lennie.');
-      return;
-    }
-    if (next != confirm) {
-      setState(() => _passwordMessage = 'A két új jelszó nem egyezik.');
-      return;
-    }
-    if (next == current) {
-      setState(() => _passwordMessage =
-          'Az új jelszó különbözzön a jelenlegitől.');
-      return;
-    }
-    setState(() {
-      _savingPassword = true;
-      _passwordMessage = null;
-    });
-    try {
-      final user = Supabase.instance.client.auth.currentUser;
-      final email = user?.email;
-      if (email == null || email.isEmpty) {
-        throw Exception('Nem található a bejelentkezett fiók.');
-      }
-      await Supabase.instance.client.auth.signInWithPassword(
-        email: email,
-        password: current,
-      );
-      await widget.onSavePassword(next);
-      if (!mounted) return;
-      _currentPasswordController.clear();
-      _newPasswordController.clear();
-      _confirmPasswordController.clear();
-      setState(() {
-        _passwordMessage = 'A jelszó módosítása sikerült.';
-        _savingPassword = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _passwordMessage =
-            'Nem sikerült módosítani. Ellenőrizd a jelenlegi jelszót.';
-        _savingPassword = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: BluchetPalette.card,
-      title: const Row(
-        children: [
-          Icon(Icons.manage_accounts_outlined,
-              color: BluchetPalette.turquoise400),
-          SizedBox(width: 10),
-          Text('Profilom'),
-        ],
-      ),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('FELHASZNÁLÓNÉV', style: TextStyle(
-                color: BluchetPalette.turquoise400,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.1,
-              )),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _usernameController,
-                autocorrect: false,
-                textCapitalization: TextCapitalization.none,
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.alternate_email),
-                  hintText: 'felhasznalonev',
-                  helperText: '3–24 karakter: a–z, 0–9 és _',
-                ),
-              ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _savingUsername ? null : _saveUsername,
-                  icon: _savingUsername
-                      ? const SizedBox(width: 16, height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.save_outlined),
-                  label: const Text('Felhasználónév mentése'),
-                ),
-              ),
-              if (_usernameMessage != null) ...[
-                const SizedBox(height: 8),
-                Text(_usernameMessage!, style: TextStyle(
-                  color: _usernameMessage!.contains('sikerült')
-                      ? BluchetPalette.turquoise400 : BluchetPalette.error,
-                )),
-              ],
-              const Divider(height: 32),
-              const Text('JELSZÓ MÓDOSÍTÁSA', style: TextStyle(
-                color: BluchetPalette.turquoise400,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 1.1,
-              )),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _currentPasswordController,
-                obscureText: !_showCurrentPassword,
-                decoration: InputDecoration(
-                  labelText: 'Jelenlegi jelszó',
-                  prefixIcon: const Icon(Icons.lock_outline),
-                  suffixIcon: IconButton(
-                    onPressed: () => setState(
-                        () => _showCurrentPassword = !_showCurrentPassword),
-                    icon: Icon(_showCurrentPassword
-                        ? Icons.visibility_off : Icons.visibility),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _newPasswordController,
-                obscureText: !_showNewPassword,
-                decoration: InputDecoration(
-                  labelText: 'Új jelszó',
-                  prefixIcon: const Icon(Icons.password_outlined),
-                  suffixIcon: IconButton(
-                    onPressed: () => setState(
-                        () => _showNewPassword = !_showNewPassword),
-                    icon: Icon(_showNewPassword
-                        ? Icons.visibility_off : Icons.visibility),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _confirmPasswordController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Új jelszó még egyszer',
-                  prefixIcon: Icon(Icons.lock_reset_outlined),
-                ),
-              ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _savingPassword ? null : _savePassword,
-                  icon: _savingPassword
-                      ? const SizedBox(width: 16, height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.password),
-                  label: const Text('Jelszó módosítása'),
-                ),
-              ),
-              if (_passwordMessage != null) ...[
-                const SizedBox(height: 8),
-                Text(_passwordMessage!, style: TextStyle(
-                  color: _passwordMessage!.contains('sikerült')
-                      ? BluchetPalette.turquoise400 : BluchetPalette.error,
-                )),
-              ],
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Bezárás'),
-        ),
-      ],
-    );
-  }
-}
-
 class ChatScreen extends StatefulWidget {
   final String currentUserId;
   final Future<void> Function() onLogout;
@@ -858,7 +571,6 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _searchError;
   List<_Conversation> _conversations = const [];
   final Map<String, int> _unreadCounts = <String, int>{};
-  final Set<String> _blockedUserIds = <String>{};
   _Conversation? _selectedConversation;
   List<_Message> _messages = const [];
   final Map<String, String> _senderUsernames = <String, String>{};
@@ -871,9 +583,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _refreshBlockedUsers().whenComplete(() {
-      if (mounted) _refreshConversations();
-    });
+    _refreshConversations();
 
     // Poll only the currently open conversation. This makes incoming messages
     // appear even when Realtime is not configured for the messages table.
@@ -999,176 +709,6 @@ class _ChatScreenState extends State<ChatScreen> {
       // details in the UI.
       debugPrint('Bluchet user search failed: $error');
     }
-  }
-
-  Future<void> _refreshBlockedUsers() async {
-    try {
-      final response = await Supabase.instance.client.rpc(
-        'get_blocked_users_for_current_user',
-      );
-      if (response is! List) {
-        throw const FormatException('Unexpected blocked-user response.');
-      }
-      final ids = <String>{};
-      for (final item in response) {
-        if (item is Map && item['id'] != null) {
-          ids.add(item['id'].toString());
-        }
-      }
-      if (!mounted) return;
-      setState(() {
-        _blockedUserIds
-          ..clear()
-          ..addAll(ids);
-      });
-    } catch (error) {
-      // The rest of the app remains usable if the SQL migration is not applied.
-      debugPrint('Bluchet blocked-user list failed: $error');
-    }
-  }
-
-  Future<void> _blockUser(_UserSearchResult user) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Block @${user.username}?'),
-        content: Text(
-          'You will no longer find each other in user search. Their direct chat will be hidden from your list. You can unblock them later.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            style: FilledButton.styleFrom(backgroundColor: BluchetPalette.error),
-            child: const Text('Block user'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    try {
-      await Supabase.instance.client.rpc(
-        'block_user_for_current_user',
-        params: {'p_blocked_id': user.userId},
-      );
-      if (!mounted) return;
-      setState(() {
-        _blockedUserIds.add(user.userId);
-        _searchResults = _searchResults
-            .where((result) => result.userId != user.userId)
-            .toList();
-        _conversations = _conversations
-            .where((conversation) =>
-                conversation.isGroup || conversation.otherUserId != user.userId)
-            .toList();
-        if (_selectedConversation != null &&
-            !_selectedConversation!.isGroup &&
-            _selectedConversation!.otherUserId == user.userId) {
-          _selectedConversation = null;
-          _messages = const [];
-          _showConversationScreen = false;
-          _messageLoadGeneration++;
-        }
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('@${user.username} blocked.')),
-      );
-    } catch (error) {
-      _showError(error);
-    }
-  }
-
-  Future<void> _unblockUser(String userId) async {
-    try {
-      await Supabase.instance.client.rpc(
-        'unblock_user_for_current_user',
-        params: {'p_blocked_id': userId},
-      );
-      if (!mounted) return;
-      setState(() => _blockedUserIds.remove(userId));
-      await _refreshBlockedUsers();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('User unblocked. Search for them again to start a chat.')),
-      );
-    } catch (error) {
-      _showError(error);
-    }
-  }
-
-  Future<void> _showBlockedUsers() async {
-    List<dynamic> rows;
-    try {
-      final response = await Supabase.instance.client.rpc(
-        'get_blocked_users_for_current_user',
-      );
-      if (response is! List) {
-        throw const FormatException('Unexpected blocked-user response.');
-      }
-      rows = List<dynamic>.from(response);
-    } catch (error) {
-      _showError(error);
-      return;
-    }
-    if (!mounted) return;
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (innerContext, setDialogState) => AlertDialog(
-          title: const Text('Blocked users'),
-          content: SizedBox(
-            width: 360,
-            child: rows.isEmpty
-                ? const Text('You have not blocked anyone.')
-                : ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: rows.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
-                    itemBuilder: (context, index) {
-                      final row = Map<String, dynamic>.from(rows[index] as Map);
-                      final id = row['id']?.toString() ?? '';
-                      final username = row['username']?.toString() ?? 'Unknown user';
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(username),
-                        trailing: TextButton(
-                          onPressed: id.isEmpty ? null : () async {
-                            try {
-                              await Supabase.instance.client.rpc(
-                                'unblock_user_for_current_user',
-                                params: {'p_blocked_id': id},
-                              );
-                              if (!mounted) return;
-                              setState(() => _blockedUserIds.remove(id));
-                              setDialogState(() {
-                                rows.removeWhere((item) =>
-                                    (item as Map)['id']?.toString() == id);
-                              });
-                              await _refreshConversations();
-                            } catch (error) {
-                              _showError(error);
-                            }
-                          },
-                          child: const Text('Unblock'),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Close'),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   void _toggleGroupInvite(String userId) {
@@ -1550,23 +1090,18 @@ class _ChatScreenState extends State<ChatScreen> {
         return a.id.compareTo(b.id);
       });
 
-      final visibleConversations = conversationsWithActivity
-          .where((conversation) =>
-              conversation.isGroup ||
-              !_blockedUserIds.contains(conversation.otherUserId))
-          .toList();
       final previousSelectedId = _selectedConversation?.id;
-      final selectedStillExists = visibleConversations.any(
+      final selectedStillExists = conversationsWithActivity.any(
         (conversation) => conversation.id == previousSelectedId,
       );
       final nextSelected = selectedStillExists
-          ? visibleConversations.firstWhere(
+          ? conversationsWithActivity.firstWhere(
               (conversation) => conversation.id == previousSelectedId,
             )
-          : (visibleConversations.isNotEmpty ? visibleConversations.first : null);
+          : (conversationsWithActivity.isNotEmpty ? conversationsWithActivity.first : null);
       final selectionChanged = nextSelected?.id != previousSelectedId;
       setState(() {
-        _conversations = visibleConversations;
+        _conversations = conversationsWithActivity;
         _selectedConversation = nextSelected;
         if (selectionChanged) _messages = const [];
         _loading = false;
@@ -1654,10 +1189,6 @@ class _ChatScreenState extends State<ChatScreen> {
     required String userId,
     required String username,
   }) async {
-    if (_blockedUserIds.contains(userId)) {
-      _showError('Unblock this user before opening a direct chat.');
-      return;
-    }
     try {
       final response = await Supabase.instance.client.rpc(
         'get_or_create_direct_conversation_for_current_user',
@@ -1776,25 +1307,14 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _removeConversation(_Conversation conversation) async {
-    final isGroup = conversation.isGroup;
-    final memberCount = conversation.memberIds.length;
-    final willDeleteGroup = isGroup && memberCount <= 1;
-    final title = isGroup ? conversation.title : conversation.otherUsername;
-    final actionText = isGroup
-        ? (willDeleteGroup ? 'Delete group' : 'Leave group')
-        : 'Delete chat';
-    final explanation = isGroup
-        ? (willDeleteGroup
-            ? 'You are the only member of “$title”. The group and its messages will be deleted.'
-            : 'You will leave “$title”. The group and its messages will remain for the other members.')
-        : '“$title” will be removed from your conversation list. The other person’s copy will remain.';
-
+  Future<void> _deleteGroup(_Conversation conversation) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: Text(actionText),
-        content: Text(explanation),
+        title: const Text('Delete group?'),
+        content: Text(
+          'This permanently deletes “${conversation.title}” and its messages for every member.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -1803,7 +1323,7 @@ class _ChatScreenState extends State<ChatScreen> {
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
             style: FilledButton.styleFrom(backgroundColor: BluchetPalette.error),
-            child: Text(actionText),
+            child: const Text('Delete group'),
           ),
         ],
       ),
@@ -1812,7 +1332,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       await Supabase.instance.client.rpc(
-        'remove_conversation_for_current_user',
+        'delete_group_for_current_user',
         params: {'p_conversation_id': conversation.id},
       );
       if (!mounted) return;
@@ -1824,48 +1344,15 @@ class _ChatScreenState extends State<ChatScreen> {
           _selectedConversation = null;
           _messages = const [];
           _showConversationScreen = false;
-          _messageLoadGeneration++;
         }
       });
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(
-          isGroup
-              ? (willDeleteGroup ? 'Group deleted.' : 'You left the group.')
-              : 'Chat removed from your list.',
-        )),
+        const SnackBar(content: Text('Group deleted.')),
       );
       await _refreshConversations();
     } catch (error) {
       _showError(error);
     }
-  }
-
-  Future<void> _showProfile() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-    final username = (user.userMetadata?['username'] ?? '').toString();
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => _ProfileDialog(
-        initialUsername: username,
-        onSaveUsername: (newUsername) async {
-          await Supabase.instance.client.rpc(
-            'change_username_for_current_user',
-            params: {'p_new_username': newUsername},
-          );
-          await Supabase.instance.client.auth.refreshSession();
-          if (mounted) {
-            await _refreshConversations();
-            await _refreshConversationActivity();
-          }
-        },
-        onSavePassword: (newPassword) async {
-          await Supabase.instance.client.auth.updateUser(
-            UserAttributes(password: newPassword),
-          );
-        },
-      ),
-    );
   }
 
   Future<void> _deleteAccount() async {
@@ -1903,11 +1390,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final conversation = _selectedConversation;
     final text = _messageController.text.trim();
     if (conversation == null || text.isEmpty) return;
-    if (!conversation.isGroup &&
-        _blockedUserIds.contains(conversation.otherUserId)) {
-      _showError('Unblock this user before sending messages.');
-      return;
-    }
 
     if (!AppSecurity.isValidMessage(text)) {
       setState(() => _error = 'Message is empty or too long.');
@@ -1951,16 +1433,15 @@ class _ChatScreenState extends State<ChatScreen> {
               : 'Bluchet',
         ),
         actions: [
-          if (_showConversationScreen && _selectedConversation != null)
+          if (_showConversationScreen &&
+              _selectedConversation?.isGroup == true &&
+              (_selectedConversation!.createdBy == widget.currentUserId ||
+                  _selectedConversation!.createdBy == null))
             IconButton(
-              tooltip: _selectedConversation!.isGroup
-                  ? (_selectedConversation!.memberIds.length <= 1
-                      ? 'Delete group'
-                      : 'Leave group')
-                  : 'Delete chat',
+              tooltip: 'Delete group',
               icon: const Icon(Icons.delete_outline),
               color: BluchetPalette.error,
-              onPressed: () => _removeConversation(_selectedConversation!),
+              onPressed: () => _deleteGroup(_selectedConversation!),
             ),
           if (_showConversationScreen && _selectedConversation?.isGroup == true)
             IconButton(
@@ -2016,16 +1497,6 @@ class _ChatScreenState extends State<ChatScreen> {
               },
               icon: const Icon(Icons.group),
             ),
-          IconButton(
-            tooltip: 'My profile',
-            onPressed: _showProfile,
-            icon: const Icon(Icons.manage_accounts_outlined),
-          ),
-          IconButton(
-            tooltip: 'Blocked users',
-            onPressed: _showBlockedUsers,
-            icon: const Icon(Icons.block),
-          ),
           IconButton(
             tooltip: 'Delete account',
             onPressed: _deleteAccount,
@@ -2189,12 +1660,6 @@ class _ChatScreenState extends State<ChatScreen> {
                             spacing: 2,
                             children: [
                               IconButton(
-                                tooltip: 'Block user',
-                                icon: const Icon(Icons.block_outlined),
-                                color: BluchetPalette.error,
-                                onPressed: () => _blockUser(result),
-                              ),
-                              IconButton(
                                 tooltip: 'Open private chat',
                                 icon: const Icon(Icons.chat_bubble_outline),
                                 color: BluchetPalette.primary,
@@ -2282,16 +1747,6 @@ class _ChatScreenState extends State<ChatScreen> {
                                 onPressed: () =>
                                     _inviteUsersToGroup(conversation),
                               ),
-                            IconButton(
-                              tooltip: conversation.isGroup
-                                  ? (conversation.memberIds.length <= 1
-                                      ? 'Delete group'
-                                      : 'Leave group')
-                                  : 'Delete chat',
-                              icon: const Icon(Icons.delete_outline),
-                              color: BluchetPalette.error,
-                              onPressed: () => _removeConversation(conversation),
-                            ),
                           ],
                         ),
                         onTap: () async {
