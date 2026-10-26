@@ -16,6 +16,7 @@ dependencies:
   intl: ^0.20.2
   cryptography: ^2.7.0
   flutter_local_notifications: ^19.4.2
+  flutter_webrtc: ^1.2.0
 
 dev_dependencies:
   flutter_test:
