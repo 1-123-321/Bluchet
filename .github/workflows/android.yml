@@ -54,7 +54,20 @@ jobs:
         run: flutter create --platforms=android .
       - name: Generate Launcher Icons
         run: flutter pub run flutter_launcher_icons
-        
+
+      - name: Enable core library desugaring
+        run: |
+          if [ -f android/app/build.gradle.kts ]; then
+            sed -i '/compileOptions {/a\        isCoreLibraryDesugaringEnabled = true' android/app/build.gradle.kts
+            sed -i '/dependencies {/a\    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")' android/app/build.gradle.kts
+          elif [ -f android/app/build.gradle ]; then
+            sed -i '/compileOptions {/a\        coreLibraryDesugaringEnabled true' android/app/build.gradle
+            sed -i '/dependencies {/a\    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"' android/app/build.gradle
+          else
+            echo "Android Gradle build file not found!"
+            exit 1
+          fi
+          
       - name: Build APK
         run: flutter build apk --release --dart-define=SUPABASE_URL="${{ secrets.SUPABASE_URL }}" --dart-define=SUPABASE_ANON_KEY="${{ secrets.SUPABASE_ANON_KEY }}"
 
