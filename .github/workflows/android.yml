@@ -1,172 +1,142 @@
-name: Flutter Android APK and Release
+name: Flutter Android APK
 
 'on':
-workflow_dispatch:
-push:
-branches:
-- main
+  workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
-contents: write
+  contents: write
 
 jobs:
-build:
-runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-latest
 
-steps:
-  - name: Checkout
-    uses: actions/checkout@v4
-    with:
-      fetch-depth: 0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  - name: Install Flutter
-    uses: subosito/flutter-action@v2
-    with:
-      channel: stable
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
 
-  - name: Install dependencies
-    run: flutter pub get
+      - name: Install dependencies
+        run: flutter pub get
 
-  - name: Verify Supabase secrets
-    shell: bash
-    env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-    run: |
-      if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
-        echo "::error::Missing Supabase secrets."
-        exit 1
-      fi
+      - name: Verify Supabase secrets
+        shell: bash
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          test -n "$SUPABASE_URL" || { echo "Missing SUPABASE_URL"; exit 1; }
+          test -n "$SUPABASE_ANON_KEY" || { echo "Missing SUPABASE_ANON_KEY"; exit 1; }
+          case "$SUPABASE_URL" in
+            https://*) ;;
+            *) echo "Invalid SUPABASE_URL"; exit 1 ;;
+          esac
 
-      case "$SUPABASE_URL" in
-        https://*) ;;
-        *)
-          echo "::error::SUPABASE_URL must start with https://"
-          exit 1
-          ;;
-      esac
+      - name: Generate Android platform
+        run: flutter create --platforms=android .
 
-      case "$SUPABASE_ANON_KEY" in
-        sb_*) ;;
-        *)
-          echo "::error::Unexpected Supabase key format."
-          exit 1
-          ;;
-      esac
+      - name: Configure core library desugaring
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+          import sys
 
-  - name: Generate Android platform
-    run: flutter create --platforms=android .
+          candidates = [
+              Path("android/app/build.gradle.kts"),
+              Path("android/app/build.gradle"),
+          ]
 
-  - name: Configure core library desugaring
-    shell: bash
-    run: |
-      python3 <<'PY'
-      from pathlib import Path
-      import re
-      import sys
-
-      candidates = [
-          Path("android/app/build.gradle.kts"),
-          Path("android/app/build.gradle"),
-      ]
-
-      path = next((p for p in candidates if p.is_file()), None)
-
-      if path is None:
-          print("::error::Android Gradle file not found.")
-          sys.exit(1)
-
-      text = path.read_text()
-      kotlin = path.suffix == ".kts"
-
-      # Find the android block and its compileOptions block.
-      android_match = re.search(r"\bandroid\s*\{", text)
-      if not android_match:
-          print("::error::Android block not found.")
-          sys.exit(1)
-
-      compile_match = re.search(
-          r"\bcompileOptions\s*\{", text[android_match.end():]
-      )
-
-      if not compile_match:
-          print("::error::compileOptions block not found.")
-          sys.exit(1)
-
-      compile_pos = android_match.end() + compile_match.end()
-      setting = (
-          "isCoreLibraryDesugaringEnabled = true"
-          if kotlin else "coreLibraryDesugaringEnabled true"
-      )
-
-      # Only insert the setting if it is not already present.
-      if not re.search(
-          r"\bisCoreLibraryDesugaringEnabled\b|\bcoreLibraryDesugaringEnabled\b",
-          text
-      ):
-          text = text[:compile_pos] + "\n        " + setting + text[compile_pos:]
-
-      # Insert the dependency into the app module's dependencies block.
-      if "desugar_jdk_libs" not in text:
-          dep_match = re.search(r"\bdependencies\s*\{", text)
-          if not dep_match:
-              print("::error::dependencies block not found.")
-              sys.exit(1)
-
-          dependency = (
-              'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
-              if kotlin else
-              'coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"'
+          gradle_file = next(
+              (p for p in candidates if p.is_file()),
+              None
           )
 
-          pos = dep_match.end()
-          text = text[:pos] + "\n    " + dependency + text[pos:]
+          if gradle_file is None:
+              sys.exit("ERROR: Android Gradle file not found.")
 
-      path.write_text(text)
+          text = gradle_file.read_text()
+          kotlin_dsl = gradle_file.suffix == ".kts"
 
-      if "desugar_jdk_libs" not in text:
-          print("::error::Desugaring dependency is missing.")
-          sys.exit(1)
+          if not re.search(
+              r"\bisCoreLibraryDesugaringEnabled\b|\bcoreLibraryDesugaringEnabled\b",
+              text
+          ):
+              match = re.search(
+                  r"(?m)^([ \t]*)compileOptions\s*\{",
+                  text
+              )
 
-      print(f"Configured desugaring in {path}")
-      PY
+              if not match:
+                  sys.exit("ERROR: compileOptions block not found.")
 
-  - name: Generate Launcher Icons
-    run: dart run flutter_launcher_icons
+              setting = (
+                  "isCoreLibraryDesugaringEnabled = true"
+                  if kotlin_dsl
+                  else "coreLibraryDesugaringEnabled true"
+              )
 
-  - name: Build Release APK
-    env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-    run: |
-      flutter build apk --release \
-        --dart-define="SUPABASE_URL=${SUPABASE_URL}" \
-        --dart-define="SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}"
+              pos = match.end()
+              text = text[:pos] + "\n        " + setting + text[pos:]
 
-  - name: Set release version
-    id: release_version
-    shell: bash
-    run: |
-      VERSION=$(grep -E '^version:' pubspec.yaml | head -1 | awk '{print $2}' | tr '+' '-')
-      if [ -z "$VERSION" ]; then
-        VERSION="1.0.0"
-      fi
+          if "desugar_jdk_libs" not in text:
+              match = re.search(
+                  r"(?m)^([ \t]*)dependencies\s*\{",
+                  text
+              )
 
-      TAG="v${VERSION}-build-${GITHUB_RUN_NUMBER}"
-      echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-      echo "name=KulcsKod ${VERSION} (build ${GITHUB_RUN_NUMBER})" >> "$GITHUB_OUTPUT"
+              if not match:
+                  sys.exit("ERROR: dependencies block not found.")
 
-  - name: Create GitHub Release and upload APK
-    env:
-      GH_TOKEN: ${{ github.token }}
-    run: |
-      gh release create "${{ steps.release_version.outputs.tag }}" \
-        "build/app/outputs/flutter-apk/app-release.apk#KulcsKod-Android.apk" \
-        --title "${{ steps.release_version.outputs.name }}" \
-        --notes "Automatikus Android APK-build.
+              dependency = (
+                  'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
+                  if kotlin_dsl
+                  else 'coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"'
+              )
 
-      Commit: ${GITHUB_SHA}
-      Build: ${GITHUB_RUN_NUMBER}
+              pos = match.end()
+              text = text[:pos] + "\n    " + dependency + text[pos:]
 
-      Az APK közvetlenül a Release Assets részéből tölthető le." \
-        --target "${GITHUB_SHA}"
+          gradle_file.write_text(text)
+          print(f"Desugaring configured in {gradle_file}")
+          PY
+
+      - name: Generate Launcher Icons
+        run: dart run flutter_launcher_icons
+
+      - name: Build Release APK
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          flutter build apk --release \
+            --dart-define="SUPABASE_URL=$SUPABASE_URL" \
+            --dart-define="SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KulcsKod-Android
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}' | tr '+' '-')
+          TAG="v${VERSION:-1.0.0}-build-${GITHUB_RUN_NUMBER}"
+
+          gh release create "$TAG" \
+            build/app/outputs/flutter-apk/app-release.apk \
+            --title "KulcsKod Android ${TAG}" \
+            --notes "Automatikus Android build. Commit: ${GITHUB_SHA}" \
+            --target "${GITHUB_SHA}"
