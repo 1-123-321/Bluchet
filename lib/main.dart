@@ -601,6 +601,27 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  Future<Map<String, String>> _loadUsernames(List<String> userIds) async {
+    if (userIds.isEmpty) return <String, String>{};
+    final response = await Supabase.instance.client.rpc(
+      'get_usernames_for_current_user',
+      params: {'p_user_ids': userIds},
+    );
+    if (response is! List) {
+      throw Exception('Username lookup returned an unexpected response.');
+    }
+    final names = <String, String>{};
+    for (final item in response) {
+      final row = Map<String, dynamic>.from(item as Map);
+      final id = row['id']?.toString();
+      final username = row['username']?.toString().trim();
+      if (id != null && username != null && username.isNotEmpty) {
+        names[id] = username;
+      }
+    }
+    return names;
+  }
+
   Future<void> _searchUsers(String term) async {
     final cleaned = term.trim();
     if (cleaned.isEmpty) {
@@ -609,11 +630,11 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     try {
-      final List<dynamic> rows = await Supabase.instance.client
-          .from('profiles')
-          .select('id, username')
-          .ilike('username', '%$cleaned%')
-          .limit(10);
+      final response = await Supabase.instance.client.rpc(
+        'search_profiles',
+        params: {'search_term': cleaned},
+      );
+      final List<dynamic> rows = response as List<dynamic>;
 
       final results = <_UserSearchResult>[];
       for (final item in rows) {
@@ -700,22 +721,8 @@ class _ChatScreenState extends State<ChatScreen> {
         .toList();
     if (memberIds.isEmpty) return const [];
 
-    // Keep every actual participant even if their profile row cannot be read.
-    // The group count must reflect conversation_participants, not profile matches.
-    final List<dynamic> profiles = await Supabase.instance.client
-        .from('profiles')
-        .select('id, username')
-        .inFilter('id', memberIds);
-
-    final usernameById = <String, String>{};
-    for (final item in profiles) {
-      final row = Map<String, dynamic>.from(item as Map);
-      final id = row['id']?.toString();
-      final username = row['username']?.toString().trim();
-      if (id != null && username != null && username.isNotEmpty) {
-        usernameById[id] = username;
-      }
-    }
+    // Resolve names through a narrowly scoped SECURITY DEFINER RPC.
+    final usernameById = await _loadUsernames(memberIds);
 
     return memberIds
         .map((id) => _UserSearchResult(
@@ -932,14 +939,8 @@ class _ChatScreenState extends State<ChatScreen> {
         if (otherParticipant == null) continue;
 
         final otherUserId = otherParticipant['user_id'] as String;
-        final profile = await Supabase.instance.client
-            .from('profiles')
-            .select('id, username')
-            .eq('id', otherUserId)
-            .maybeSingle();
-        final username = (profile?['username'] as String?)?.trim().isNotEmpty == true
-            ? (profile!['username'] as String).trim()
-            : 'Unknown user';
+        final usernameById = await _loadUsernames([otherUserId]);
+        final username = usernameById[otherUserId] ?? 'Unknown user';
 
         conversations.add(
           _Conversation(
@@ -1166,20 +1167,9 @@ class _ChatScreenState extends State<ChatScreen> {
       final resolvedNames = <String, String>{};
       if (senderIds.isNotEmpty) {
         try {
-          final List<dynamic> profiles = await Supabase.instance.client
-              .from('profiles')
-              .select('id, username')
-              .inFilter('id', senderIds);
-          for (final profile in profiles) {
-            final row = Map<String, dynamic>.from(profile as Map);
-            final id = row['id']?.toString();
-            final username = row['username']?.toString().trim();
-            if (id != null && username != null && username.isNotEmpty) {
-              resolvedNames[id] = username;
-            }
-          }
+          resolvedNames.addAll(await _loadUsernames(senderIds));
         } catch (_) {
-          // Keep messages usable if directory lookup is unavailable.
+          // Keep messages usable if username lookup is unavailable.
         }
       }
 
