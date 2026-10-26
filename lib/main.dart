@@ -93,8 +93,9 @@ class BluchetPalette {
   static const Color inputText = Color(0xFFF0F5F4);
   static const Color inputLabel = Color(0xFFB0BFBC);
   static const Color success = Color(0xFF1A8A89);
-  static const Color error = Color(0xFFB54C5D);
-  static const Color dangerSoft = Color(0xFF40272D);
+  // Errors use a clear yellow warning color instead of red.
+  static const Color error = Color(0xFFFFD45C);
+  static const Color dangerSoft = Color(0xFF3B3522);
 }
 
 class BluchetTheme {
@@ -102,11 +103,13 @@ class BluchetTheme {
     final base = ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
+      visualDensity: VisualDensity.compact,
       scaffoldBackgroundColor: BluchetPalette.background,
       colorScheme: const ColorScheme.dark(
         primary: BluchetPalette.primary,
         secondary: BluchetPalette.accent,
         surface: BluchetPalette.surface,
+        error: BluchetPalette.error,
         onPrimary: Color(0xFFF4F7F7),
         onSecondary: Color(0xFFF4F7F7),
         onSurface: BluchetPalette.text,
@@ -122,27 +125,30 @@ class BluchetTheme {
         backgroundColor: BluchetPalette.primary,
         foregroundColor: Color(0xFFF4F7F7),
         elevation: 0,
+        toolbarHeight: 52,
+        iconTheme: IconThemeData(size: 20),
+        actionsIconTheme: IconThemeData(size: 20),
       ),
       cardTheme: CardThemeData(
         color: BluchetPalette.card,
         elevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(12),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: const Color(0xFF252D30),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: BluchetPalette.royalBlue200),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: BluchetPalette.royalBlue200),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(10),
           borderSide:
               const BorderSide(color: BluchetPalette.accent, width: 2.5),
         ),
@@ -157,9 +163,9 @@ class BluchetTheme {
         style: ElevatedButton.styleFrom(
           foregroundColor: const Color(0xFFF4F7F7),
           backgroundColor: BluchetPalette.accent,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(10),
           ),
           elevation: 0,
         ),
@@ -195,7 +201,7 @@ class BluchetStartupApp extends StatelessWidget {
                   message,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
-                    color: BluchetPalette.text,
+                    color: BluchetPalette.error,
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
                   ),
@@ -422,14 +428,14 @@ class _AuthScreenState extends State<AuthScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(16),
             child: Card(
               color: BluchetPalette.card,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(14),
               ),
               child: Padding(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(16),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -442,34 +448,34 @@ class _AuthScreenState extends State<AuthScreen> {
                       child: ClipOval(
                         child: Image.asset(
                           'assets/app_icon.png',
-                          width: 64,
-                          height: 64,
+                          width: 48,
+                          height: 48,
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) => const Icon(
                             Icons.image_not_supported_outlined,
-                            size: 40,
+                            size: 30,
                             color: BluchetPalette.primary,
                           ),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     const Text(
                       'Bluchet',
                       style: TextStyle(
-                        fontSize: 32,
+                        fontSize: 28,
                         fontWeight: FontWeight.bold,
                         color: BluchetPalette.text,
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
                     TextField(
                       controller: _usernameController,
                       style: const TextStyle(color: BluchetPalette.inputText),
                       textInputAction: TextInputAction.next,
                       decoration: const InputDecoration(labelText: 'Username'),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 10),
                     TextField(
                       controller: _passwordController,
                       style: const TextStyle(color: BluchetPalette.inputText),
@@ -478,13 +484,13 @@ class _AuthScreenState extends State<AuthScreen> {
                       decoration: const InputDecoration(labelText: 'Password'),
                     ),
                     if (_error != null) ...[
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 10),
                       Text(
                         _error!,
                         style: const TextStyle(color: BluchetPalette.error),
                       ),
                     ],
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 14),
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
@@ -492,7 +498,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         child: Text(_isSubmitting ? 'Please wait…' : 'Continue'),
                       ),
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 6),
                     TextButton(
                       onPressed: _isSubmitting
                           ? null
@@ -552,6 +558,7 @@ class _ChatScreenState extends State<ChatScreen> {
   int _messageLoadGeneration = 0;
   Timer? _messageRefreshTimer;
   bool _pollingMessages = false;
+  int _activityRefreshTicks = 0;
 
   @override
   void initState() {
@@ -561,8 +568,15 @@ class _ChatScreenState extends State<ChatScreen> {
     // Poll only the currently open conversation. This makes incoming messages
     // appear even when Realtime is not configured for the messages table.
     _messageRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      _activityRefreshTicks++;
+      if (_activityRefreshTicks >= 10) {
+        _activityRefreshTicks = 0;
+        _refreshConversationActivity();
+      }
+
       final conversationId = _selectedConversation?.id;
-      if (!mounted || conversationId == null || _pollingMessages) return;
+      if (conversationId == null || _pollingMessages) return;
       _pollingMessages = true;
       _loadMessages(conversationId, scrollToBottom: false).whenComplete(() {
         _pollingMessages = false;
@@ -932,18 +946,65 @@ class _ChatScreenState extends State<ChatScreen> {
         for (final conversation in conversations)
           conversation.id: conversation,
       }.values.toList();
+      // Sort using the timestamp of each conversation's newest message.
+      // The timestamp is read from Supabase (not guessed from local send time),
+      // and conversations with no messages remain at the bottom.
+      final activityByConversation = <String, DateTime>{};
+      for (final conversation in uniqueConversations) {
+        try {
+          final latestMessage = await Supabase.instance.client
+              .from('messages')
+              .select('created_at')
+              .eq('conversation_id', conversation.id)
+              .order('created_at', ascending: false)
+              .limit(1)
+              .maybeSingle();
+          final createdAt = latestMessage?['created_at'];
+          if (createdAt != null) {
+            final parsed = DateTime.tryParse(createdAt.toString());
+            if (parsed != null) {
+              activityByConversation[conversation.id] = parsed;
+            }
+          }
+        } catch (_) {
+          // Keep the list usable if message timestamps are not readable.
+        }
+      }
+      final conversationsWithActivity = uniqueConversations.map((conversation) {
+        return _Conversation(
+          id: conversation.id,
+          otherUserId: conversation.otherUserId,
+          otherUsername: conversation.otherUsername,
+          isGroup: conversation.isGroup,
+          title: conversation.title,
+          memberIds: conversation.memberIds,
+          lastActivityAt: activityByConversation[conversation.id],
+        );
+      }).toList();
+      conversationsWithActivity.sort((a, b) {
+        final aTime = a.lastActivityAt;
+        final bTime = b.lastActivityAt;
+        if (aTime == null && bTime != null) return 1;
+        if (aTime != null && bTime == null) return -1;
+        if (aTime != null && bTime != null) {
+          final byActivity = bTime.compareTo(aTime);
+          if (byActivity != 0) return byActivity;
+        }
+        return a.id.compareTo(b.id);
+      });
+
       final previousSelectedId = _selectedConversation?.id;
-      final selectedStillExists = uniqueConversations.any(
+      final selectedStillExists = conversationsWithActivity.any(
         (conversation) => conversation.id == previousSelectedId,
       );
       final nextSelected = selectedStillExists
-          ? uniqueConversations.firstWhere(
+          ? conversationsWithActivity.firstWhere(
               (conversation) => conversation.id == previousSelectedId,
             )
-          : (uniqueConversations.isNotEmpty ? uniqueConversations.first : null);
+          : (conversationsWithActivity.isNotEmpty ? conversationsWithActivity.first : null);
       final selectionChanged = nextSelected?.id != previousSelectedId;
       setState(() {
-        _conversations = uniqueConversations;
+        _conversations = conversationsWithActivity;
         _selectedConversation = nextSelected;
         if (selectionChanged) _messages = const [];
         _loading = false;
@@ -962,6 +1023,68 @@ class _ChatScreenState extends State<ChatScreen> {
       _showError(error);
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _refreshConversationActivity() async {
+    final current = List<_Conversation>.from(_conversations);
+    if (!mounted || current.isEmpty) return;
+
+    final activityByConversation = <String, DateTime>{};
+    for (final conversation in current) {
+      try {
+        final latestMessage = await Supabase.instance.client
+            .from('messages')
+            .select('created_at')
+            .eq('conversation_id', conversation.id)
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        final createdAt = latestMessage?['created_at'];
+        if (createdAt != null) {
+          final parsed = DateTime.tryParse(createdAt.toString());
+          if (parsed != null) activityByConversation[conversation.id] = parsed;
+        }
+      } catch (_) {
+        // Preserve the current order if activity cannot be read.
+      }
+    }
+
+    if (!mounted) return;
+    final updated = current.map((conversation) {
+      return _Conversation(
+        id: conversation.id,
+        otherUserId: conversation.otherUserId,
+        otherUsername: conversation.otherUsername,
+        isGroup: conversation.isGroup,
+        title: conversation.title,
+        memberIds: conversation.memberIds,
+        lastActivityAt: activityByConversation[conversation.id],
+      );
+    }).toList();
+    updated.sort((a, b) {
+      final aTime = a.lastActivityAt;
+      final bTime = b.lastActivityAt;
+      if (aTime == null && bTime != null) return 1;
+      if (aTime != null && bTime == null) return -1;
+      if (aTime != null && bTime != null) {
+        final byActivity = bTime.compareTo(aTime);
+        if (byActivity != 0) return byActivity;
+      }
+      return a.id.compareTo(b.id);
+    });
+
+    setState(() {
+      _conversations = updated;
+      final selectedId = _selectedConversation?.id;
+      if (selectedId != null) {
+        for (final conversation in updated) {
+          if (conversation.id == selectedId) {
+            _selectedConversation = conversation;
+            break;
+          }
+        }
+      }
+    });
   }
 
   Future<void> _openConversation({
@@ -1115,6 +1238,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       _messageController.clear();
       await _loadMessages(conversation.id);
+      await _refreshConversations();
     } catch (error) {
       _showError(error);
     }
@@ -1226,7 +1350,7 @@ class _ChatScreenState extends State<ChatScreen> {
           : Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
                   child: Row(
                     children: [
                       Expanded(
@@ -1282,7 +1406,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
                   child: Row(
                     children: [
                       Expanded(
@@ -1360,15 +1484,15 @@ class _ChatScreenState extends State<ChatScreen> {
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
                       color: BluchetPalette.dangerSoft,
-                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: BluchetPalette.error.withOpacity(0.7)),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
                       _error!,
                       style: const TextStyle(color: BluchetPalette.error),
                     ),
                   ),
-                SizedBox(
-                  height: 260,
+                Expanded(
                   child: ListView.builder(
                     itemCount: _conversations.length,
                     itemBuilder: (context, index) {
@@ -1431,26 +1555,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     },
                   ),
                 ),
-                Expanded(
-                  child: _selectedConversation == null
-                      ? const Center(
-                          child: Text(
-                            'Select a conversation',
-                            style:
-                                TextStyle(color: BluchetPalette.textMuted),
-                          ),
-                        )
-                      : _ConversationDetailView(
-                          conversation: _selectedConversation!,
-                          currentUserId: widget.currentUserId,
-                          scrollController: _scrollController,
-                          messageController: _messageController,
-                          messages: _messages,
-                          senderUsernames: _senderUsernames,
-                          error: _error,
-                          onSend: _sendMessage,
-                        ),
-                ),
               ],
             ),
     );
@@ -1483,7 +1587,7 @@ class _ConversationDetailView extends StatelessWidget {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
           child: Align(
             alignment: Alignment.centerLeft,
             child: Text(
@@ -1491,7 +1595,7 @@ class _ConversationDetailView extends StatelessWidget {
                   ? conversation.title
                   : conversation.otherUsername,
               style: const TextStyle(
-                fontSize: 24,
+                fontSize: 20,
                 fontWeight: FontWeight.bold,
                 color: BluchetPalette.text,
               ),
@@ -1515,7 +1619,7 @@ class _ConversationDetailView extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(Icons.forum_outlined,
-                            size: 44, color: BluchetPalette.primary),
+                            size: 34, color: BluchetPalette.primary),
                         const SizedBox(height: 10),
                         const Text(
                           'No messages yet',
@@ -1551,8 +1655,8 @@ class _ConversationDetailView extends StatelessWidget {
                           : Alignment.centerLeft,
                       child: Container(
                         margin: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 6),
-                        padding: const EdgeInsets.all(12),
+                            horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.all(10),
                         constraints: const BoxConstraints(maxWidth: 620),
                         decoration: BoxDecoration(
                           color: isMine
@@ -1578,7 +1682,7 @@ class _ConversationDetailView extends StatelessWidget {
                             Text(
                               message.text,
                               style: const TextStyle(
-                                color: const Color(0xFFF0F5F4),
+                                color: Color(0xFFF0F5F4),
                                 fontSize: 15,
                               ),
                             ),
@@ -1586,7 +1690,7 @@ class _ConversationDetailView extends StatelessWidget {
                             Text(
                               time,
                               style: const TextStyle(
-                                color: const Color(0xFFB2C0BE),
+                                color: Color(0xFFB2C0BE),
                                 fontSize: 11,
                               ),
                             ),
@@ -1599,7 +1703,7 @@ class _ConversationDetailView extends StatelessWidget {
         ),
         SafeArea(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -1614,16 +1718,16 @@ class _ConversationDetailView extends StatelessWidget {
                       hintText: 'Type a message',
                       border: OutlineInputBorder(),
                       contentPadding: EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 14,
+                        horizontal: 12,
+                        vertical: 10,
                       ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 6),
                 SizedBox(
-                  width: 56,
-                  height: 56,
+                  width: 44,
+                  height: 44,
                   child: IconButton(
                     onPressed: onSend,
                     icon: const Icon(Icons.send),
@@ -1656,6 +1760,7 @@ class _Conversation {
   final bool isGroup;
   final String title;
   final List<String> memberIds;
+  final DateTime? lastActivityAt;
 
   const _Conversation({
     required this.id,
@@ -1664,6 +1769,7 @@ class _Conversation {
     this.isGroup = false,
     this.title = '',
     this.memberIds = const [],
+    this.lastActivityAt,
   });
 }
 
