@@ -126,7 +126,20 @@ jobs:
 
       - name: Generate Launcher Icons
         run: dart run flutter_launcher_icons
-
+    
+      - name: Debug AndroidManifest
+        run: |
+          echo "=== Manifest path ==="
+          pwd
+          echo "=== XML content ==="
+          cat -n android/app/src/main/AndroidManifest.xml
+          echo "=== XML validation ==="
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          ET.parse("android/app/src/main/AndroidManifest.xml")
+          print("XML syntax OK")
+          PY
+    
       - name: Build Release APK
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
