@@ -24,17 +24,27 @@ const AndroidNotificationChannel _bluchetNotificationChannel =
 );
 
 Future<void> _initializeLocalNotifications() async {
-  const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const androidSettings = AndroidInitializationSettings('@mipmap/launcher_icon');
   const settings = InitializationSettings(android: androidSettings);
   await _localNotifications.initialize(settings);
 
   final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<
       AndroidFlutterLocalNotificationsPlugin>();
   await androidPlugin?.createNotificationChannel(_bluchetNotificationChannel);
-  final permissionGranted = await androidPlugin?.requestNotificationsPermission();
-  debugPrint(
-    'Bluchet notification permission: ${permissionGranted == null ? 'not applicable' : permissionGranted ? 'granted' : 'not granted'}',
-  );
+}
+
+Future<void> _requestNotificationPermission() async {
+  if (!Platform.isAndroid) return;
+  try {
+    final androidPlugin = _localNotifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    final permissionGranted = await androidPlugin?.requestNotificationsPermission();
+    debugPrint(
+      'Bluchet notification permission: ${permissionGranted == null ? 'not applicable' : permissionGranted ? 'granted' : 'not granted'}',
+    );
+  } catch (error, stack) {
+    debugPrint('Bluchet notification permission request failed: $error\n$stack');
+  }
 }
 
 Future<void> _showLocalNotification({
@@ -122,7 +132,7 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
 
       await _notifications.initialize(
         const InitializationSettings(
-          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+          android: AndroidInitializationSettings('@mipmap/launcher_icon'),
         ),
       );
       final androidNotifications = _notifications
@@ -293,11 +303,9 @@ Future<void> _startBackgroundService(String userId) async {
   await FlutterForegroundTask.saveData(key: 'supabase_anon_key', value: anonKey);
   await FlutterForegroundTask.saveData(key: 'call_user_id', value: userId);
 
-  final permission = await FlutterForegroundTask.checkNotificationPermission();
-  if (permission != NotificationPermission.granted) {
-    await FlutterForegroundTask.requestNotificationPermission();
-  }
-
+  // Notification permission is requested once from the visible app UI after
+  // the first frame. Avoid opening a second permission flow while starting
+  // the foreground service.
   if (await FlutterForegroundTask.isRunningService) {
     await FlutterForegroundTask.restartService();
   } else {
@@ -307,7 +315,7 @@ Future<void> _startBackgroundService(String userId) async {
       notificationText: 'Bejövő hívások figyelése aktív.',
       callback: kulcsKodForegroundTaskStart,
       notificationInitialRoute: '/',
-      serviceTypes: [ForegroundServiceTypes.remoteMessaging],
+      serviceTypes: [ForegroundServiceTypes.dataSync],
     );
   }
 }
@@ -1541,6 +1549,10 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    // Ask only after the signed-in chat screen is visible, not on the login screen.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_requestNotificationPermission());
+    });
     _e2ee = _BluchetE2ee(widget.currentUserId, const FlutterSecureStorage());
     // Generate/load and register this account's E2EE key automatically.
     // Failures remain retryable and are surfaced instead of silently ignored.
