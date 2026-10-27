@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:cryptography/cryptography.dart';
@@ -19,7 +17,7 @@ const AndroidNotificationChannel _bluchetNotificationChannel =
     AndroidNotificationChannel(
   'bluchet_messages_calls',
   'Bluchet üzenetek és hívások',
-  description: 'Bejövő KulcsKod-hívások értesítései.',
+  description: 'Új üzenetek és bejövő hívások értesítései.',
   importance: Importance.max,
 );
 
@@ -56,280 +54,10 @@ Future<void> _showLocalNotification({
   }
 }
 
-@pragma('vm:entry-point')
-void kulcsKodForegroundTaskStart() {
-  FlutterForegroundTask.setTaskHandler(_KulcsKodForegroundTaskHandler());
-}
-
-class _KulcsKodForegroundTaskHandler extends TaskHandler {
-  SupabaseClient? _client;
-  StreamSubscription<List<Map<String, dynamic>>>? _callsSubscription;
-  final FlutterLocalNotificationsPlugin _notifications =
-      FlutterLocalNotificationsPlugin();
-  final Set<String> _seenCallIds = <String>{};
-  String? _userId;
-
-  @override
-  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    try {
-      final url = (await FlutterForegroundTask.getData(key: 'supabase_url'))
-          ?.toString();
-      final anonKey = (await FlutterForegroundTask.getData(key: 'supabase_anon_key'))
-          ?.toString();
-      _userId = (await FlutterForegroundTask.getData(key: 'call_user_id'))
-          ?.toString();
-
-      if (url == null || anonKey == null || _userId == null ||
-          url.isEmpty || anonKey.isEmpty || _userId!.isEmpty) {
-        debugPrint('KulcsKod call listener: missing service configuration.');
-        return;
-      }
-
-      const secureStorage = FlutterSecureStorage();
-      final accountsRaw = await secureStorage.read(
-        key: 'bluchet_saved_accounts_v1',
-      );
-      if (accountsRaw == null || accountsRaw.isEmpty) {
-        debugPrint('KulcsKod call listener: no saved account session.');
-        return;
-      }
-
-      final decoded = jsonDecode(accountsRaw);
-      if (decoded is! Map) return;
-      final account = decoded[_userId];
-      final refreshToken = account is Map
-          ? account['refreshToken']?.toString()
-          : null;
-      if (refreshToken == null || refreshToken.isEmpty) {
-        debugPrint('KulcsKod call listener: no refresh token for active account.');
-        return;
-      }
-
-      final savedSeen = await FlutterForegroundTask.getData(
-        key: 'kulcskod_seen_call_ids',
-      );
-      if (savedSeen is String && savedSeen.isNotEmpty) {
-        try {
-          final values = jsonDecode(savedSeen);
-          if (values is List) {
-            _seenCallIds.addAll(values.map((value) => value.toString()));
-          }
-        } catch (_) {}
-      }
-
-      await _notifications.initialize(
-        const InitializationSettings(
-          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-        ),
-      );
-      final androidNotifications = _notifications
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>();
-      await androidNotifications?.createNotificationChannel(
-        const AndroidNotificationChannel(
-          'kulcskod_incoming_calls',
-          'KulcsKod bejövő hívások',
-          description: 'Bejövő KulcsKod hanghívások értesítései.',
-          importance: Importance.max,
-        ),
-      );
-
-      // This client has its own auth session in the background isolate. The
-      // refresh token comes from encrypted FlutterSecureStorage, not from the
-      // foreground-task preferences.
-      final client = SupabaseClient(
-        url,
-        anonKey,
-      );
-      _client = client;
-      await client.auth.setSession(refreshToken);
-      if (client.auth.currentUser?.id != _userId) {
-        throw StateError('A háttérszolgáltatás felhasználója nem egyezik.');
-      }
-
-      _callsSubscription = client
-          .from('voice_calls')
-          .stream(primaryKey: ['id'])
-          .eq('callee_id', _userId!)
-          .listen(
-        (rows) => unawaited(_processCallRows(rows)),
-        onError: (Object error, StackTrace stack) {
-          debugPrint('KulcsKod background call stream error: $error');
-          FlutterForegroundTask.sendDataToMain(<String, dynamic>{
-            'type': 'call_listener_error',
-            'message': error.toString(),
-          });
-        },
-      );
-      FlutterForegroundTask.sendDataToMain(<String, dynamic>{
-        'type': 'call_listener_started',
-      });
-    } catch (error, stack) {
-      debugPrint('KulcsKod background call listener failed: $error\n$stack');
-      FlutterForegroundTask.sendDataToMain(<String, dynamic>{
-        'type': 'call_listener_error',
-        'message': error.toString(),
-      });
-    }
-  }
-
-  Future<void> _processCallRows(List<Map<String, dynamic>> rows) async {
-    final now = DateTime.now().toUtc();
-    for (final row in rows) {
-      if (row['status']?.toString() != 'ringing') continue;
-      if (row['callee_id']?.toString() != _userId) continue;
-      final callId = row['id']?.toString();
-      if (callId == null || callId.isEmpty || _seenCallIds.contains(callId)) {
-        continue;
-      }
-
-      // Avoid notifying about old ringing rows when the service first connects.
-      final createdAtText = row['created_at']?.toString();
-      if (createdAtText == null) continue;
-      final createdAt = DateTime.tryParse(createdAtText)?.toUtc();
-      if (createdAt == null) continue;
-      final age = now.difference(createdAt);
-      if (age > const Duration(minutes: 2) ||
-          age < const Duration(seconds: -30)) {
-        continue;
-      }
-
-      _seenCallIds.add(callId);
-      if (_seenCallIds.length > 100) {
-        _seenCallIds.remove(_seenCallIds.first);
-      }
-      await FlutterForegroundTask.saveData(
-        key: 'kulcskod_seen_call_ids',
-        value: jsonEncode(_seenCallIds.toList()),
-      );
-
-      final notificationId = callId.hashCode & 0x7fffffff;
-      await _notifications.show(
-        notificationId,
-        'Bejövő KulcsKod-hívás',
-        'Valaki hanghívást indított neked.',
-        const NotificationDetails(
-          android: AndroidNotificationDetails(
-            'kulcskod_incoming_calls',
-            'KulcsKod bejövő hívások',
-            channelDescription: 'Bejövő KulcsKod hanghívások értesítései.',
-            importance: Importance.max,
-            priority: Priority.high,
-            category: AndroidNotificationCategory.call,
-            fullScreenIntent: true,
-            ongoing: true,
-            autoCancel: true,
-            playSound: true,
-          ),
-        ),
-        payload: callId,
-      );
-    }
-  }
-
-  @override
-  void onRepeatEvent(DateTime timestamp) {}
-
-  @override
-  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
-    await _callsSubscription?.cancel();
-    _callsSubscription = null;
-    await _client?.dispose();
-    _client = null;
-  }
-
-  @override
-  void onReceiveData(Object data) async {
-    if (data is! Map) return;
-    final newUserId = data['userId']?.toString();
-    if (newUserId != null && newUserId.isNotEmpty && newUserId != _userId) {
-      // Account changes should restart the service through the UI isolate.
-      await _callsSubscription?.cancel();
-      await _client?.dispose();
-      _callsSubscription = null;
-      _client = null;
-      _userId = newUserId;
-    }
-  }
-}
-
-void _initializeBackgroundService() {
-  FlutterForegroundTask.init(
-    androidNotificationOptions: AndroidNotificationOptions(
-      channelId: 'kulcskod_background_service',
-      channelName: 'KulcsKod háttérfigyelés',
-      channelDescription: 'A KulcsKod aktív háttérfigyelésének állapota.',
-      onlyAlertOnce: true,
-    ),
-    iosNotificationOptions: const IOSNotificationOptions(
-      showNotification: false,
-      playSound: false,
-    ),
-    foregroundTaskOptions: ForegroundTaskOptions(
-      eventAction: ForegroundTaskEventAction.repeat(15000),
-      autoRunOnBoot: false,
-      allowWakeLock: true,
-      allowWifiLock: true,
-    ),
-  );
-}
-
-Future<void> _startBackgroundService(String userId) async {
-  if (!Platform.isAndroid) return;
-  final url = _readEnv('SUPABASE_URL');
-  final anonKey = _readEnv('SUPABASE_ANON_KEY');
-  if (url.isEmpty || anonKey.isEmpty) {
-    debugPrint('KulcsKod call listener not started: Supabase config missing.');
-    return;
-  }
-
-  // These are non-secret project settings and the active user ID. The refresh
-  // token itself remains inside FlutterSecureStorage.
-  await FlutterForegroundTask.saveData(key: 'supabase_url', value: url);
-  await FlutterForegroundTask.saveData(key: 'supabase_anon_key', value: anonKey);
-  await FlutterForegroundTask.saveData(key: 'call_user_id', value: userId);
-
-  final permission = await FlutterForegroundTask.checkNotificationPermission();
-  if (permission != NotificationPermission.granted) {
-    await FlutterForegroundTask.requestNotificationPermission();
-  }
-
-  if (await FlutterForegroundTask.isRunningService) {
-    await FlutterForegroundTask.restartService();
-  } else {
-    await FlutterForegroundTask.startService(
-      serviceId: 256,
-      notificationTitle: 'KulcsKod hívásfigyelés',
-      notificationText: 'Bejövő hívások figyelése aktív.',
-      callback: kulcsKodForegroundTaskStart,
-      notificationInitialRoute: '/',
-      serviceTypes: [ForegroundServiceTypes.remoteMessaging],
-    );
-  }
-}
-
-Future<void> _stopBackgroundService() async {
-  if (!Platform.isAndroid) return;
-  if (await FlutterForegroundTask.isRunningService) {
-    await FlutterForegroundTask.stopService();
-  }
-  await FlutterForegroundTask.removeData(key: 'call_user_id');
-}
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  FlutterForegroundTask.initCommunicationPort();
-  try {
-    await _initializeLocalNotifications();
-  } catch (error) {
-    debugPrint('Bluchet notification initialization failed: $error');
-  }
-
-  try {
-    _initializeBackgroundService();
-  } catch (error) {
-    debugPrint('KulcsKod background service initialization failed: $error');
-  }
+  // DIAGNOSZTIKA: az értesítések inicializálása ideiglenesen kikapcsolva.
+  // Ezzel ellenőrizzük, hogy az indulási összeomlás ehhez kapcsolódik-e.
 
   try {
     await dotenv.load(fileName: '.env');
@@ -353,11 +81,7 @@ Future<void> main() async {
   }
 
   try {
-    await Supabase.initialize(
-      url: url,
-      anonKey: anonKey,
-      realtimeLifecycleOptions: const RealtimeLifecycleOptions.manual(),
-    );
+    await Supabase.initialize(url: url, anonKey: anonKey);
   } catch (error) {
     runApp(BluchetStartupApp(message: error.toString()));
     return;
@@ -569,32 +293,19 @@ class _BluchetE2ee {
     return base64Url.decode(normalized);
   }
 
-  // A failed registration must be retryable; don't cache a failed Future forever.
-  Future<void> ensureReady() async {
-    try {
-      await (_ready ??= _initialize());
-    } catch (_) {
-      _ready = null;
-      rethrow;
-    }
-  }
-
-  // Scope device identifiers and private seeds to the signed-in account.
-  // This prevents two remembered accounts on one phone from sharing a key.
-  String get _deviceIdStorageKey => 'bluchet_e2ee_device_id_$userId';
-  String get _seedStorageKey => 'bluchet_e2ee_x25519_seed_$userId';
+  Future<void> ensureReady() => _ready ??= _initialize();
 
   Future<void> _initialize() async {
-    _deviceId = await storage.read(key: _deviceIdStorageKey);
+    _deviceId = await storage.read(key: 'bluchet_e2ee_device_id');
     _deviceId ??= const Uuid().v4();
-    await storage.write(key: _deviceIdStorageKey, value: _deviceId);
+    await storage.write(key: 'bluchet_e2ee_device_id', value: _deviceId);
 
-    var seedText = await storage.read(key: _seedStorageKey);
+    var seedText = await storage.read(key: 'bluchet_e2ee_x25519_seed');
     List<int> seed;
     if (seedText == null) {
       final generated = await _x25519.newKeyPair();
       seed = await generated.extractPrivateKeyBytes();
-      await storage.write(key: _seedStorageKey, value: _b64(seed));
+      await storage.write(key: 'bluchet_e2ee_x25519_seed', value: _b64(seed));
     } else {
       seed = _unb64(seedText);
     }
@@ -602,10 +313,10 @@ class _BluchetE2ee {
     final publicKey = await _keyPair!.extractPublicKey();
     _publicKey = _b64(publicKey.bytes);
 
-    // Register/update only this account + installation. Never delete first: a
-    // failed insert must not leave the installation without its previous record.
+    // Replace only this installation's public-key record.
     final db = Supabase.instance.client;
-    await db.from('device_keys').upsert({
+    await db.from('device_keys').delete().eq('user_id', userId).eq('device_id', _deviceId!);
+    await db.from('device_keys').insert({
       'user_id': userId,
       'device_id': _deviceId,
       'identity_key': _publicKey,
@@ -614,7 +325,7 @@ class _BluchetE2ee {
       'signed_prekey': _publicKey,
       'signed_prekey_signature': 'bluchet-static-x25519-v1-no-signature',
       'one_time_prekeys': <dynamic>[],
-    }, onConflict: 'user_id,device_id');
+    });
   }
 
   Future<String> encryptForConversation({
@@ -736,45 +447,10 @@ class _BluchetAppState extends State<BluchetApp> {
 
   bool _loading = true;
   String? _currentUserId;
-  StreamSubscription<dynamic>? _authStateSubscription;
-  static const _accountsKey = 'bluchet_saved_accounts_v1';
-  static const _lastAccountKey = 'bluchet_last_account_v1';
-
-  Future<Map<String, dynamic>> _savedAccounts() async {
-    final raw = await _storage.read(key: _accountsKey);
-    if (raw == null || raw.isEmpty) return <String, dynamic>{};
-    try {
-      final decoded = jsonDecode(raw);
-      return decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
-    } catch (_) {
-      return <String, dynamic>{};
-    }
-  }
-
-  Future<void> _rememberCurrentSession(String userId, {String? username}) async {
-    final session = Supabase.instance.client.auth.currentSession;
-    final refreshToken = session?.refreshToken;
-    if (refreshToken == null || refreshToken.isEmpty) return;
-    final accounts = await _savedAccounts();
-    final old = accounts[userId] is Map ? Map<String, dynamic>.from(accounts[userId] as Map) : <String, dynamic>{};
-    accounts[userId] = <String, dynamic>{
-      'userId': userId,
-      'username': username ?? old['username'] ?? Supabase.instance.client.auth.currentUser?.userMetadata?['username'] ?? 'Mentett fiók',
-      'refreshToken': refreshToken,
-    };
-    await _storage.write(key: _accountsKey, value: jsonEncode(accounts));
-    await _storage.write(key: _lastAccountKey, value: userId);
-  }
-
 
   @override
   void initState() {
     super.initState();
-    // Keep the encrypted refresh-token copy current as Supabase rotates it.
-    _authStateSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((state) {
-      final userId = state.session?.user.id;
-      if (userId != null) unawaited(_rememberCurrentSession(userId));
-    });
     _loadCurrentUser();
   }
 
@@ -783,35 +459,12 @@ class _BluchetAppState extends State<BluchetApp> {
       // Older builds stored a plain profile UUID without a Supabase Auth
       // session. That is not an authenticated identity, so discard it.
       await _storage.delete(key: 'bluchet_user_id');
-      final client = Supabase.instance.client;
-      var user = client.auth.currentUser;
-      if (user != null) {
-        await _rememberCurrentSession(user.id);
-      } else {
-        final accounts = await _savedAccounts();
-        final lastId = await _storage.read(key: _lastAccountKey);
-        final last = lastId == null ? null : accounts[lastId];
-        final refreshToken = last is Map ? last['refreshToken'] as String? : null;
-        if (refreshToken != null && refreshToken.isNotEmpty) {
-          try {
-            final response = await client.auth.setSession(refreshToken);
-            user = response.user;
-            if (user != null) await _rememberCurrentSession(user.id);
-          } catch (error) {
-            debugPrint('Could not restore last Bluchet account: $error');
-          }
-        }
-      }
+      final user = Supabase.instance.client.auth.currentUser;
       if (!mounted) return;
       setState(() {
         _currentUserId = user?.id;
         _loading = false;
       });
-      if (user != null) {
-        unawaited(_startBackgroundService(user.id));
-      } else {
-        unawaited(_stopBackgroundService());
-      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -845,10 +498,8 @@ class _BluchetAppState extends State<BluchetApp> {
       throw Exception('Login did not return a valid authenticated user.');
     }
 
-    await _rememberCurrentSession(userId, username: username.trim().toLowerCase());
     if (!mounted) return;
     setState(() => _currentUserId = userId);
-    unawaited(_startBackgroundService(userId));
   }
 
   Future<void> _register(String username, String password) async {
@@ -879,88 +530,19 @@ class _BluchetAppState extends State<BluchetApp> {
       );
     }
 
-    await _rememberCurrentSession(userId, username: normalizedUsername);
     if (!mounted) return;
     setState(() => _currentUserId = userId);
-    unawaited(_startBackgroundService(userId));
-  }
-
-  Future<void> _switchAccount() async {
-    final accounts = await _savedAccounts();
-    if (!mounted) return;
-    final selectedId = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Fiókváltás'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: accounts.isEmpty
-              ? const Text('Még nincs mentett fiók.')
-              : ListView(
-                  shrinkWrap: true,
-                  children: accounts.entries.map((entry) {
-                    final data = entry.value is Map ? entry.value as Map : const {};
-                    final name = data['username']?.toString() ?? 'Mentett fiók';
-                    return ListTile(
-                      leading: const Icon(Icons.account_circle_outlined),
-                      title: Text(name),
-                      subtitle: Text(entry.key, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      onTap: () => Navigator.pop(dialogContext, entry.key),
-                    );
-                  }).toList(),
-                ),
-        ),
-        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Mégse'))],
-      ),
-    );
-    if (selectedId == null || selectedId == _currentUserId) return;
-    final data = accounts[selectedId];
-    final refreshToken = data is Map ? data['refreshToken'] as String? : null;
-    if (refreshToken == null || refreshToken.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ehhez a fiókhoz nincs mentett munkamenet. Jelentkezz be újra.'),
-        ),
-      );
-      return;
-    }
-    try {
-      // Preserve the current account before changing the single active Supabase session.
-      if (_currentUserId != null) await _rememberCurrentSession(_currentUserId!);
-      final response = await Supabase.instance.client.auth.setSession(refreshToken);
-      final userId = response.user?.id;
-      if (userId == null) throw Exception('A fiók munkamenete lejárt. Jelentkezz be újra.');
-      await _rememberCurrentSession(userId);
-      if (!mounted) return;
-      setState(() => _currentUserId = userId);
-      unawaited(_startBackgroundService(userId));
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Nem sikerült fiókot váltani: $error')));
-    }
   }
 
   Future<void> _logout() async {
-    if (_currentUserId != null) await _rememberCurrentSession(_currentUserId!);
-    await _stopBackgroundService();
-    await Supabase.instance.client.auth.signOut(scope: SignOutScope.local);
+    await Supabase.instance.client.auth.signOut();
     await _storage.delete(key: 'bluchet_user_id');
     if (!mounted) return;
     setState(() => _currentUserId = null);
   }
 
   Future<void> _onAccountDeleted() async {
-    await _stopBackgroundService();
     try {
-      if (_currentUserId != null) {
-        final accounts = await _savedAccounts();
-        accounts.remove(_currentUserId);
-        await _storage.write(key: _accountsKey, value: jsonEncode(accounts));
-        if (await _storage.read(key: _lastAccountKey) == _currentUserId) {
-          await _storage.delete(key: _lastAccountKey);
-        }
-      }
       await Supabase.instance.client.auth.signOut(scope: SignOutScope.local);
     } catch (_) {
       // The account may already be deleted, so clear the local session anyway.
@@ -971,19 +553,15 @@ class _BluchetAppState extends State<BluchetApp> {
   }
 
   @override
-  void dispose() {
-    _authStateSubscription?.cancel();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     if (_loading) {
       return MaterialApp(
         theme: BluchetTheme.light(),
         home: const Scaffold(
           backgroundColor: BluchetPalette.background,
-          body: Center(child: _BluchetLoadingAnimation()),
+          body: Center(
+            child: CircularProgressIndicator(color: BluchetPalette.primary),
+          ),
         ),
       );
     }
@@ -997,80 +575,10 @@ class _BluchetAppState extends State<BluchetApp> {
 
     return MaterialApp(
       theme: BluchetTheme.light(),
-      home: TweenAnimationBuilder<double>(
-        tween: Tween<double>(begin: 0.0, end: 1.0),
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-        builder: (context, opacity, child) => Opacity(
-          opacity: opacity,
-          child: Transform.translate(
-            offset: Offset(0, (1 - opacity) * 8),
-            child: child,
-          ),
-        ),
-        child: ChatScreen(
-          // Recreate all per-account state (E2EE keys, WebRTC controller,
-          // listeners and conversation cache) when the signed-in user changes.
-          key: ValueKey<String>(_currentUserId!),
-          currentUserId: _currentUserId!,
-          onSwitchAccount: _switchAccount,
-          onLogout: _logout,
-          onAccountDeleted: _onAccountDeleted,
-        ),
-      ),
-    );
-  }
-}
-
-class _BluchetLoadingAnimation extends StatelessWidget {
-  const _BluchetLoadingAnimation();
-
-  @override
-  Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0.72, end: 1),
-      duration: const Duration(milliseconds: 650),
-      curve: Curves.easeOutCubic,
-      builder: (context, value, child) => Opacity(
-        opacity: value.clamp(0.0, 1.0),
-        child: Transform.scale(scale: value, child: child),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(22),
-            child: Image.asset(
-              'assets/app_icon.png',
-              width: 76,
-              height: 76,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) => const Icon(
-                Icons.chat_bubble_rounded,
-                size: 64,
-                color: BluchetPalette.primary,
-              ),
-            ),
-          ),
-          const SizedBox(height: 14),
-          const Text(
-            'Bluchet',
-            style: TextStyle(
-              color: BluchetPalette.text,
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 18),
-          const SizedBox(
-            width: 26,
-            height: 26,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.5,
-              color: BluchetPalette.primary,
-            ),
-          ),
-        ],
+      home: ChatScreen(
+        currentUserId: _currentUserId!,
+        onLogout: _logout,
+        onAccountDeleted: _onAccountDeleted,
       ),
     );
   }
@@ -1269,7 +777,6 @@ class _VoiceCallController {
   bool muted = false;
   bool speaker = true;
   bool _handlingRemoteCandidates = false;
-  bool _hasRemoteDescription = false;
   final List<RTCIceCandidate> _pendingCandidates = [];
 
   Future<void> listenForIncoming() async {
@@ -1286,7 +793,6 @@ class _VoiceCallController {
 
   Future<void> _preparePeer(String id) async {
     callId = id;
-    _hasRemoteDescription = false;
     _pc = await createPeerConnection({
       'iceServers': [
         {'urls': 'stun:stun.l.google.com:19302'},
@@ -1329,7 +835,7 @@ class _VoiceCallController {
             row['sdp_mline_index'] is int ? row['sdp_mline_index'] as int : int.tryParse('${row['sdp_mline_index']}'),
           );
           try {
-            if (_hasRemoteDescription) {
+            if (_pc?.remoteDescription != null) {
               await _pc!.addCandidate(candidate);
             } else {
               _pendingCandidates.add(candidate);
@@ -1377,14 +883,9 @@ class _VoiceCallController {
           final row = payload.newRecord;
           if (row['status'] == 'ended' || row['status'] == 'declined' || row['status'] == 'missed') {
             await _disposeMedia();
-          } else if (row['answer_sdp'] != null &&
-              !_hasRemoteDescription &&
-              row['caller_id'] == userId) {
+          } else if (row['answer_sdp'] != null && _pc?.remoteDescription == null && row['caller_id'] == userId) {
             try {
-              await _pc!.setRemoteDescription(
-                RTCSessionDescription(row['answer_sdp'].toString(), 'answer'),
-              );
-              _hasRemoteDescription = true;
+              await _pc!.setRemoteDescription(RTCSessionDescription(row['answer_sdp'].toString(), 'answer'));
               await _flushCandidates();
             } catch (e) { debugPrint('Call answer failed: $e'); }
           }
@@ -1398,10 +899,7 @@ class _VoiceCallController {
     await _preparePeer(id);
     final offerText = row['offer_sdp']?.toString();
     if (offerText == null || offerText.isEmpty) throw Exception('A hívás ajánlata még nem érkezett meg.');
-    await _pc!.setRemoteDescription(
-      RTCSessionDescription(offerText, 'offer'),
-    );
-    _hasRemoteDescription = true;
+    await _pc!.setRemoteDescription(RTCSessionDescription(offerText, 'offer'));
     await _flushCandidates();
     final answer = await _pc!.createAnswer();
     await _pc!.setLocalDescription(answer);
@@ -1442,7 +940,6 @@ class _VoiceCallController {
     }
     await _pc?.close();
     _pc = null;
-    _hasRemoteDescription = false;
     await _candidateChannel?.unsubscribe();
     _candidateChannel = null;
     await _callChannel?.unsubscribe();
@@ -1462,14 +959,12 @@ class _VoiceCallController {
 class ChatScreen extends StatefulWidget {
   final String currentUserId;
   final Future<void> Function() onLogout;
-  final Future<void> Function() onSwitchAccount;
   final Future<void> Function() onAccountDeleted;
 
   const ChatScreen({
     super.key,
     required this.currentUserId,
     required this.onLogout,
-    required this.onSwitchAccount,
     required this.onAccountDeleted,
   });
 
@@ -1510,11 +1005,6 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _e2ee = _BluchetE2ee(widget.currentUserId, const FlutterSecureStorage());
-    // Generate/load and register this account's E2EE key automatically.
-    // Failures remain retryable and are surfaced instead of silently ignored.
-    _e2ee.ensureReady().catchError((Object error) {
-      if (mounted) _showError('Titkosítási kulcs regisztrációja sikertelen: $error');
-    });
     _voiceCall = _VoiceCallController(userId: widget.currentUserId, onIncoming: (call) {
       if (!mounted || _incomingCall != null || _callActive) return;
       final callerId = call['caller_id']?.toString() ?? '';
@@ -1560,7 +1050,6 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     });
   }
-
 
   @override
   void dispose() {
@@ -2606,11 +2095,6 @@ class _ChatScreenState extends State<ChatScreen> {
               color: BluchetPalette.turquoise300,
             ),
           IconButton(
-            tooltip: 'Fiókváltás',
-            onPressed: widget.onSwitchAccount,
-            icon: const Icon(Icons.switch_account),
-          ),
-          IconButton(
             tooltip: 'Delete account',
             onPressed: _deleteAccount,
             icon: const Icon(Icons.person_remove_alt_1),
@@ -2646,15 +2130,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ? const Center(
               child: CircularProgressIndicator(color: BluchetPalette.primary),
             )
-          : Container(
-              decoration: const BoxDecoration(
-                image: DecorationImage(
-                  image: AssetImage('assets/app_icon.png'),
-                  fit: BoxFit.contain,
-                  opacity: 0.035,
-                ),
-              ),
-              child: Column(
+          : Column(
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
@@ -2827,19 +2303,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       final conversation = _conversations[index];
                       final isSelected =
                           _selectedConversation?.id == conversation.id;
-                      return TweenAnimationBuilder<double>(
-                        key: ValueKey('conversation-${conversation.id}'),
-                        tween: Tween<double>(begin: 0, end: 1),
-                        duration: Duration(milliseconds: 260 + (index.clamp(0, 8) * 45)),
-                        curve: Curves.easeOutCubic,
-                        builder: (context, progress, child) => Opacity(
-                          opacity: progress,
-                          child: Transform.translate(
-                            offset: Offset(0, (1 - progress) * 14),
-                            child: child,
-                          ),
-                        ),
-                        child: ListTile(
+                      return ListTile(
                         selected: isSelected,
                         selectedTileColor: const Color(0xFF303E40),
                         title: Text(
@@ -2863,22 +2327,13 @@ class _ChatScreenState extends State<ChatScreen> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             if ((_unreadCounts[conversation.id] ?? 0) > 0)
-                              TweenAnimationBuilder<double>(
-                                tween: Tween<double>(begin: 0.35, end: 1),
-                                duration: const Duration(milliseconds: 420),
-                                curve: Curves.elasticOut,
-                                builder: (context, scale, child) => Transform.scale(
-                                  scale: scale,
-                                  child: child,
-                                ),
-                                child: Container(
-                                  width: 10,
-                                  height: 10,
-                                  margin: const EdgeInsets.only(right: 10),
-                                  decoration: const BoxDecoration(
-                                    color: BluchetPalette.turquoise500,
-                                    shape: BoxShape.circle,
-                                  ),
+                              Container(
+                                width: 10,
+                                height: 10,
+                                margin: const EdgeInsets.only(right: 10),
+                                decoration: const BoxDecoration(
+                                  color: BluchetPalette.turquoise500,
+                                  shape: BoxShape.circle,
                                 ),
                               ),
                             if (conversation.isGroup)
@@ -2900,13 +2355,11 @@ class _ChatScreenState extends State<ChatScreen> {
                           });
                           await _loadMessages(conversation.id);
                         },
-                      ),
                       );
                     },
                   ),
                 ),
               ],
-              ),
             ),
     );
   }
