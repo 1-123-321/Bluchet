@@ -41,7 +41,7 @@ jobs:
       - name: Generate Android platform
         run: flutter create --platforms=android .
 
-            - name: Configure core library desugaring
+      - name: Configure core library desugaring
         shell: bash
         run: |
           python3 <<'PY'
