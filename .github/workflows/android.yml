@@ -41,7 +41,7 @@ jobs:
       - name: Generate Android platform
         run: flutter create --platforms=android .
 
-      - name: Configure core library desugaring
+            - name: Configure core library desugaring
         shell: bash
         run: |
           python3 <<'PY'
@@ -65,6 +65,7 @@ jobs:
           text = gradle_file.read_text()
           kotlin_dsl = gradle_file.suffix == ".kts"
 
+          # Enable desugaring in compileOptions.
           if not re.search(
               r"\bisCoreLibraryDesugaringEnabled\b|\bcoreLibraryDesugaringEnabled\b",
               text
@@ -84,28 +85,43 @@ jobs:
               )
 
               pos = match.end()
-              text = text[:pos] + "\n        " + setting + text[pos:]
-
-          if "desugar_jdk_libs" not in text:
-              match = re.search(
-                  r"(?m)^([ \t]*)dependencies\s*\{",
-                  text
+              text = (
+                  text[:pos]
+                  + "\n        " + setting
+                  + text[pos:]
               )
 
-              if not match:
-                  sys.exit("ERROR: dependencies block not found.")
-
+          # Create dependencies block if missing, otherwise append dependency.
+          if "desugar_jdk_libs" not in text:
               dependency = (
                   'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
                   if kotlin_dsl
                   else 'coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"'
               )
 
-              pos = match.end()
-              text = text[:pos] + "\n    " + dependency + text[pos:]
+              match = re.search(
+                  r"(?m)^([ \t]*)dependencies\s*\{",
+                  text
+              )
+
+              if match:
+                  pos = match.end()
+                  text = (
+                      text[:pos]
+                      + "\n    " + dependency
+                      + text[pos:]
+                  )
+              else:
+                  text += (
+                      "\n\ndependencies {\n"
+                      + "    " + dependency + "\n"
+                      + "}\n"
+                  )
 
           gradle_file.write_text(text)
-          print(f"Desugaring configured in {gradle_file}")
+
+          print(f"Updated: {gradle_file}")
+          print("Desugaring dependency configured.")
           PY
 
       - name: Generate Launcher Icons
