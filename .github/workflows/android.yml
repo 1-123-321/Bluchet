@@ -31,11 +31,22 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          test -n "$SUPABASE_URL" || { echo "Missing SUPABASE_URL"; exit 1; }
-          test -n "$SUPABASE_ANON_KEY" || { echo "Missing SUPABASE_ANON_KEY"; exit 1; }
+          test -n "$SUPABASE_URL" || {
+            echo "ERROR: Missing SUPABASE_URL"
+            exit 1
+          }
+
+          test -n "$SUPABASE_ANON_KEY" || {
+            echo "ERROR: Missing SUPABASE_ANON_KEY"
+            exit 1
+          }
+
           case "$SUPABASE_URL" in
             https://*) ;;
-            *) echo "Invalid SUPABASE_URL"; exit 1 ;;
+            *)
+              echo "ERROR: Invalid SUPABASE_URL"
+              exit 1
+              ;;
           esac
 
       - name: Generate Android platform
@@ -65,7 +76,6 @@ jobs:
           text = gradle_file.read_text()
           kotlin_dsl = gradle_file.suffix == ".kts"
 
-          # Enable desugaring in compileOptions.
           if not re.search(
               r"\bisCoreLibraryDesugaringEnabled\b|\bcoreLibraryDesugaringEnabled\b",
               text
@@ -91,7 +101,6 @@ jobs:
                   + text[pos:]
               )
 
-          # Create dependencies block if missing, otherwise append dependency.
           if "desugar_jdk_libs" not in text:
               dependency = (
                   'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
@@ -126,20 +135,24 @@ jobs:
 
       - name: Generate Launcher Icons
         run: dart run flutter_launcher_icons
-    
+
       - name: Debug AndroidManifest
+        shell: bash
         run: |
           echo "=== Manifest path ==="
           pwd
+
           echo "=== XML content ==="
           cat -n android/app/src/main/AndroidManifest.xml
+
           echo "=== XML validation ==="
           python3 - <<'PY'
           import xml.etree.ElementTree as ET
+
           ET.parse("android/app/src/main/AndroidManifest.xml")
           print("XML syntax OK")
           PY
-    
+
       - name: Build Release APK
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -152,41 +165,73 @@ jobs:
       - name: Verify Android manifest in APK
         shell: bash
         run: |
+          set -euo pipefail
+
           APK="build/app/outputs/flutter-apk/app-release.apk"
 
-          test -f "$APK" || {
-            echo "ERROR: APK not found"
-            exit 1
-          }
+          echo "=== Checking APK ==="
 
-          SDK_DIR="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          APKTOOL="$SDK_DIR/build-tools/$(ls "$SDK_DIR/build-tools" | sort -V | tail -n 1)/aapt"
-
-          if [ ! -x "$APKTOOL" ]; then
-            echo "ERROR: aapt not found"
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK not found: $APK"
+            find build/app/outputs -type f -name "*.apk" || true
             exit 1
           fi
 
+          ls -lh "$APK"
+
+          SDK_DIR="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+
+          if [ -z "$SDK_DIR" ] || [ ! -d "$SDK_DIR/build-tools" ]; then
+            echo "ERROR: Android SDK build-tools directory not found."
+            exit 1
+          fi
+
+          APKTOOL="$(
+            find "$SDK_DIR/build-tools" \
+              -type f -name aapt -print \
+              | sort -V \
+              | tail -n 1
+          )"
+
+          if [ -z "$APKTOOL" ] || [ ! -x "$APKTOOL" ]; then
+            echo "ERROR: aapt executable not found."
+            exit 1
+          fi
+
+          echo "Using aapt: $APKTOOL"
+
+          echo "=== APK permissions ==="
           "$APKTOOL" dump permissions "$APK" \
             | tee apk-permissions.txt
 
-          "$APKTOOL" dump xmltree "$APK" \
-            --file AndroidManifest.xml \
+          echo "=== APK AndroidManifest.xml ==="
+          "$APKTOOL" dump xmltree "$APK" AndroidManifest.xml \
             | tee apk-manifest.txt
 
-          echo "=== Manifest ellenőrzése ==="
+          echo "=== Checking expected manifest entries ==="
 
-          grep -E \
-            'POST_NOTIFICATIONS|FOREGROUND_SERVICE|WAKE_LOCK|USE_FULL_SCREEN_INTENT|remoteMessaging|ForegroundService' \
-            apk-permissions.txt apk-manifest.txt \
-            || {
-              echo "WARNING: Some expected entries are missing."
-            }
-            
+          if grep -Eq \
+            'android.permission.INTERNET|android.permission.POST_NOTIFICATIONS|android.permission.FOREGROUND_SERVICE|android.permission.WAKE_LOCK' \
+            apk-permissions.txt; then
+            echo "Expected permissions were found."
+          else
+            echo "WARNING: Expected permissions were not found."
+          fi
+
+          if grep -Eq \
+            'ForegroundService|foregroundServiceType|dataSync|remoteMessaging' \
+            apk-manifest.txt; then
+            echo "Foreground service entry was found."
+          else
+            echo "WARNING: Foreground service entry was not found."
+          fi
+
+          echo "=== APK verification completed ==="
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: KulcsKod-Android
+          name: Bluchet-Android
           path: build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
 
@@ -200,6 +245,6 @@ jobs:
 
           gh release create "$TAG" \
             build/app/outputs/flutter-apk/app-release.apk \
-            --title "KulcsKod Android ${TAG}" \
+            --title "Bluchet Android ${TAG}" \
             --notes "Automatikus Android build. Commit: ${GITHUB_SHA}" \
             --target "${GITHUB_SHA}"
