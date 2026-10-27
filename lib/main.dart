@@ -777,6 +777,7 @@ class _VoiceCallController {
   bool muted = false;
   bool speaker = true;
   bool _handlingRemoteCandidates = false;
+  bool _hasRemoteDescription = false;
   final List<RTCIceCandidate> _pendingCandidates = [];
 
   Future<void> listenForIncoming() async {
@@ -835,7 +836,7 @@ class _VoiceCallController {
             row['sdp_mline_index'] is int ? row['sdp_mline_index'] as int : int.tryParse('${row['sdp_mline_index']}'),
           );
           try {
-            if (_pc?.remoteDescription != null) {
+            if (_hasRemoteDescription && _pc != null) {
               await _pc!.addCandidate(candidate);
             } else {
               _pendingCandidates.add(candidate);
@@ -883,9 +884,10 @@ class _VoiceCallController {
           final row = payload.newRecord;
           if (row['status'] == 'ended' || row['status'] == 'declined' || row['status'] == 'missed') {
             await _disposeMedia();
-          } else if (row['answer_sdp'] != null && _pc?.remoteDescription == null && row['caller_id'] == userId) {
+          } else if (row['answer_sdp'] != null && !_hasRemoteDescription && row['caller_id'] == userId) {
             try {
               await _pc!.setRemoteDescription(RTCSessionDescription(row['answer_sdp'].toString(), 'answer'));
+              _hasRemoteDescription = true;
               await _flushCandidates();
             } catch (e) { debugPrint('Call answer failed: $e'); }
           }
@@ -900,6 +902,7 @@ class _VoiceCallController {
     final offerText = row['offer_sdp']?.toString();
     if (offerText == null || offerText.isEmpty) throw Exception('A hívás ajánlata még nem érkezett meg.');
     await _pc!.setRemoteDescription(RTCSessionDescription(offerText, 'offer'));
+    _hasRemoteDescription = true;
     await _flushCandidates();
     final answer = await _pc!.createAnswer();
     await _pc!.setLocalDescription(answer);
@@ -946,6 +949,7 @@ class _VoiceCallController {
     _callChannel = null;
     callId = null;
     _pendingCandidates.clear();
+    _hasRemoteDescription = false;
     muted = false;
     speaker = true;
   }
