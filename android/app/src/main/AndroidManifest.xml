@@ -1,12 +1,20 @@
+
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Alapvető hálózati és értesítési engedélyek -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Háttérben futó szolgáltatás -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <application
         android:label="Bluchet"
+        android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
         <activity
@@ -28,6 +36,12 @@
             </intent-filter>
 
         </activity>
+
+        <!-- Flutter Foreground Task szolgáltatás -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="remoteMessaging"
+            android:exported="false" />
 
         <meta-data
             android:name="flutterEmbedding"
