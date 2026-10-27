@@ -136,6 +136,40 @@ jobs:
             --dart-define="SUPABASE_URL=$SUPABASE_URL" \
             --dart-define="SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY"
 
+      - name: Verify Android manifest in APK
+        shell: bash
+        run: |
+          APK="build/app/outputs/flutter-apk/app-release.apk"
+
+          test -f "$APK" || {
+            echo "ERROR: APK not found"
+            exit 1
+          }
+
+          SDK_DIR="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          APKTOOL="$SDK_DIR/build-tools/$(ls "$SDK_DIR/build-tools" | sort -V | tail -n 1)/aapt"
+
+          if [ ! -x "$APKTOOL" ]; then
+            echo "ERROR: aapt not found"
+            exit 1
+          fi
+
+          "$APKTOOL" dump permissions "$APK" \
+            | tee apk-permissions.txt
+
+          "$APKTOOL" dump xmltree "$APK" \
+            --file AndroidManifest.xml \
+            | tee apk-manifest.txt
+
+          echo "=== Manifest ellenőrzése ==="
+
+          grep -E \
+            'POST_NOTIFICATIONS|FOREGROUND_SERVICE|WAKE_LOCK|USE_FULL_SCREEN_INTENT|remoteMessaging|ForegroundService' \
+            apk-permissions.txt apk-manifest.txt \
+            || {
+              echo "WARNING: Some expected entries are missing."
+            }
+            
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
