@@ -140,9 +140,6 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
       final client = SupabaseClient(
         url,
         anonKey,
-        authOptions: const AuthClientOptions(
-          storageKey: 'kulcskod_background_auth',
-        ),
       );
       _client = client;
       await client.auth.setSession(refreshToken);
