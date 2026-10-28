@@ -72,11 +72,11 @@ Future<void> _showLocalNotification({
 }
 
 @pragma('vm:entry-point')
-void kulcsKodForegroundTaskStart() {
-  FlutterForegroundTask.setTaskHandler(_KulcsKodForegroundTaskHandler());
+void bluchetForegroundTaskStart() {
+  FlutterForegroundTask.setTaskHandler(_BluchetForegroundTaskHandler());
 }
 
-class _KulcsKodForegroundTaskHandler extends TaskHandler {
+class _BluchetForegroundTaskHandler extends TaskHandler {
   SupabaseClient? _client;
   StreamSubscription<List<Map<String, dynamic>>>? _callsSubscription;
   final FlutterLocalNotificationsPlugin _notifications =
@@ -96,7 +96,7 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
 
       if (url == null || anonKey == null || _userId == null ||
           url.isEmpty || anonKey.isEmpty || _userId!.isEmpty) {
-        debugPrint('KulcsKod call listener: missing service configuration.');
+        debugPrint('Bluchet call listener: missing service configuration.');
         return;
       }
 
@@ -105,7 +105,7 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
         key: 'bluchet_saved_accounts_v1',
       );
       if (accountsRaw == null || accountsRaw.isEmpty) {
-        debugPrint('KulcsKod call listener: no saved account session.');
+        debugPrint('Bluchet call listener: no saved account session.');
         return;
       }
 
@@ -116,12 +116,12 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
           ? account['refreshToken']?.toString()
           : null;
       if (refreshToken == null || refreshToken.isEmpty) {
-        debugPrint('KulcsKod call listener: no refresh token for active account.');
+        debugPrint('Bluchet call listener: no refresh token for active account.');
         return;
       }
 
       final savedSeen = await FlutterForegroundTask.getData(
-        key: 'kulcskod_seen_call_ids',
+        key: 'bluchet_seen_call_ids',
       );
       if (savedSeen is String && savedSeen.isNotEmpty) {
         try {
@@ -172,7 +172,7 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
           .listen(
         (rows) => unawaited(_processCallRows(rows)),
         onError: (Object error, StackTrace stack) {
-          debugPrint('KulcsKod background call stream error: $error');
+          debugPrint('Bluchet background call stream error: $error');
           FlutterForegroundTask.sendDataToMain(<String, dynamic>{
             'type': 'call_listener_error',
             'message': error.toString(),
@@ -183,7 +183,7 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
         'type': 'call_listener_started',
       });
     } catch (error, stack) {
-      debugPrint('KulcsKod background call listener failed: $error\n$stack');
+      debugPrint('Bluchet background call listener failed: $error\n$stack');
       FlutterForegroundTask.sendDataToMain(<String, dynamic>{
         'type': 'call_listener_error',
         'message': error.toString(),
@@ -217,7 +217,7 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
         _seenCallIds.remove(_seenCallIds.first);
       }
       await FlutterForegroundTask.saveData(
-        key: 'kulcskod_seen_call_ids',
+        key: 'bluchet_seen_call_ids',
         value: jsonEncode(_seenCallIds.toList()),
       );
 
@@ -274,9 +274,9 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
 void _initializeBackgroundService() {
   FlutterForegroundTask.init(
     androidNotificationOptions: AndroidNotificationOptions(
-      channelId: 'kulcskod_background_service',
-      channelName: 'KulcsKod háttérfigyelés',
-      channelDescription: 'A KulcsKod aktív háttérfigyelésének állapota.',
+      channelId: 'bluchet_background_service',
+      channelName: 'Bluchet háttérfigyelés',
+      channelDescription: 'A Bluchet aktív háttérfigyelésének állapota.',
       onlyAlertOnce: true,
     ),
     iosNotificationOptions: const IOSNotificationOptions(
@@ -297,7 +297,7 @@ Future<void> _startBackgroundService(String userId) async {
   final url = _readEnv('SUPABASE_URL');
   final anonKey = _readEnv('SUPABASE_ANON_KEY');
   if (url.isEmpty || anonKey.isEmpty) {
-    debugPrint('KulcsKod call listener not started: Supabase config missing.');
+    debugPrint('Bluchet call listener not started: Supabase config missing.');
     return;
   }
 
@@ -315,9 +315,9 @@ Future<void> _startBackgroundService(String userId) async {
   } else {
     await FlutterForegroundTask.startService(
       serviceId: 256,
-      notificationTitle: 'KulcsKod hívásfigyelés',
+      notificationTitle: 'Bluchet hívásfigyelés',
       notificationText: 'Bejövő hívások figyelése aktív.',
-      callback: kulcsKodForegroundTaskStart,
+      callback: bluchetForegroundTaskStart,
       notificationInitialRoute: '/',
       serviceTypes: [ForegroundServiceTypes.remoteMessaging],
     );
@@ -344,7 +344,7 @@ Future<void> main() async {
   try {
     _initializeBackgroundService();
   } catch (error) {
-    debugPrint('KulcsKod background service initialization failed: $error');
+    debugPrint('Bluchet background service initialization failed: $error');
   }
 
   try {
@@ -902,46 +902,142 @@ class _BluchetAppState extends State<BluchetApp> {
   }
 
   Future<void> _switchAccount() async {
-    final accounts = await _savedAccounts();
-    if (!mounted) return;
-    final selectedId = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Fiókváltás'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: accounts.isEmpty
-              ? const Text('Még nincs mentett fiók.')
-              : ListView(
-                  shrinkWrap: true,
-                  children: accounts.entries.map((entry) {
-                    final data = entry.value is Map ? entry.value as Map : const {};
-                    final name = data['username']?.toString() ?? 'Mentett fiók';
-                    return ListTile(
-                      leading: const Icon(Icons.account_circle_outlined),
-                      title: Text(name),
-                      subtitle: Text(entry.key, maxLines: 1, overflow: TextOverflow.ellipsis),
-                      onTap: () => Navigator.pop(dialogContext, entry.key),
-                    );
-                  }).toList(),
-                ),
-        ),
-        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Mégse'))],
-      ),
-    );
-    if (selectedId == null || selectedId == _currentUserId) return;
-    final data = accounts[selectedId];
-    final refreshToken = data is Map ? data['refreshToken'] as String? : null;
-    if (refreshToken == null || refreshToken.isEmpty) {
+    try {
+      final accounts = await _savedAccounts();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ehhez a fiókhoz nincs mentett munkamenet. Jelentkezz be újra.'),
+      final selectedId = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Fiókváltás'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: accounts.isEmpty
+                ? const Text('Nincs mentett fiók. Jelentkezz be legalább két fiókba, hogy váltani tudj közöttük.')
+                : ListView(
+                    shrinkWrap: true,
+                    children: [
+                      ...accounts.entries.map((entry) {
+                        final data = entry.value is Map ? entry.value as Map : const {};
+                        final name = data['username']?.toString() ?? 'Mentett fiók';
+                        final isCurrent = entry.key == _currentUserId;
+                        return ListTile(
+                          leading: Icon(isCurrent ? Icons.check_circle : Icons.account_circle_outlined),
+                          title: Text(name),
+                          subtitle: Text(
+                            isCurrent ? 'Jelenleg használatban' : entry.key,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onTap: () => Navigator.pop(dialogContext, entry.key),
+                        );
+                      }),
+                      const Divider(),
+                      ListTile(
+                        leading: const Icon(Icons.person_add_alt_1),
+                        title: const Text('Másik fiók hozzáadása'),
+                        subtitle: const Text('Bejelentkezés másik felhasználónévvel'),
+                        onTap: () => Navigator.pop(dialogContext, '__add_account__'),
+                      ),
+                    ],
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Mégse'),
+            ),
+          ],
         ),
       );
-      return;
-    }
-    try {
+      if (selectedId == null || selectedId == _currentUserId) return;
+
+      if (selectedId == '__add_account__') {
+        final usernameController = TextEditingController();
+        final passwordController = TextEditingController();
+        try {
+          final credentials = await showDialog<List<String>>(
+            context: context,
+            barrierDismissible: false,
+            builder: (loginContext) => AlertDialog(
+              title: const Text('Másik fiók hozzáadása'),
+              content: SizedBox(
+                width: 360,
+                child: AutofillGroup(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: usernameController,
+                        autofocus: true,
+                        textInputAction: TextInputAction.next,
+                        autofillHints: const [AutofillHints.username],
+                        decoration: const InputDecoration(
+                          labelText: 'Felhasználónév',
+                          prefixIcon: Icon(Icons.person_outline),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: passwordController,
+                        obscureText: true,
+                        textInputAction: TextInputAction.done,
+                        autofillHints: const [AutofillHints.password],
+                        onSubmitted: (_) => Navigator.pop(loginContext, [
+                          usernameController.text,
+                          passwordController.text,
+                        ]),
+                        decoration: const InputDecoration(
+                          labelText: 'Jelszó',
+                          prefixIcon: Icon(Icons.lock_outline),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(loginContext),
+                  child: const Text('Mégse'),
+                ),
+                FilledButton.icon(
+                  onPressed: () => Navigator.pop(loginContext, [
+                    usernameController.text,
+                    passwordController.text,
+                  ]),
+                  icon: const Icon(Icons.login),
+                  label: const Text('Bejelentkezés'),
+                ),
+              ],
+            ),
+          );
+          if (credentials == null) return;
+          // Preserve the current session before Supabase activates the new one.
+          if (_currentUserId != null) await _rememberCurrentSession(_currentUserId!);
+          await _login(credentials[0], credentials[1]);
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Az új fiók hozzáadva. Legközelebb a listából válthatsz rá.')),
+          );
+        } finally {
+          usernameController.dispose();
+          passwordController.dispose();
+        }
+        return;
+      }
+
+      final data = accounts[selectedId];
+      final refreshToken = data is Map ? data['refreshToken']?.toString() : null;
+      if (refreshToken == null || refreshToken.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ehhez a fiókhoz nincs mentett munkamenet. Jelentkezz be újra.'),
+          ),
+        );
+        return;
+      }
+
       // Preserve the current account before changing the single active Supabase session.
       if (_currentUserId != null) await _rememberCurrentSession(_currentUserId!);
       final response = await Supabase.instance.client.auth.setSession(refreshToken);
@@ -951,9 +1047,12 @@ class _BluchetAppState extends State<BluchetApp> {
       if (!mounted) return;
       setState(() => _currentUserId = userId);
       unawaited(_startBackgroundService(userId));
-    } catch (error) {
+    } catch (error, stack) {
+      debugPrint('Bluchet account switch failed: $error\n$stack');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Nem sikerült fiókot váltani: $error')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Nem sikerült megnyitni vagy végrehajtani a fiókváltást: $error')),
+      );
     }
   }
 
@@ -1286,6 +1385,10 @@ class _VoiceCallController {
   bool speaker = true;
   bool _handlingRemoteCandidates = false;
   bool _hasRemoteDescription = false;
+  DateTime? _callCreatedAt;
+  DateTime? _callConnectedAt;
+  String? _callCallerId;
+  String? _callConversationId;
   final List<RTCIceCandidate> _pendingCandidates = [];
 
   Future<void> listenForIncoming() async {
@@ -1390,8 +1493,12 @@ class _VoiceCallController {
       'caller_id': userId,
       'callee_id': calleeId,
       'status': 'ringing',
-    }).select('id').single();
+    }).select('id, created_at').single();
     final id = row['id'].toString();
+    _callCreatedAt = DateTime.tryParse(row['created_at']?.toString() ?? '')?.toLocal() ?? DateTime.now();
+    _callConnectedAt = null;
+    _callCallerId = userId;
+    _callConversationId = conversationId;
     try {
       await _preparePeer(id);
     } catch (error) {
@@ -1419,6 +1526,9 @@ class _VoiceCallController {
         filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'id', value: id),
         callback: (payload) async {
           final row = payload.newRecord;
+          if (row['status'] == 'active') {
+            _callConnectedAt ??= DateTime.now();
+          }
           if (row['status'] == 'ended' || row['status'] == 'declined' || row['status'] == 'missed') {
             await _disposeMedia();
           } else if (row['answer_sdp'] != null &&
@@ -1439,6 +1549,10 @@ class _VoiceCallController {
 
   Future<void> acceptCall(Map<String, dynamic> row) async {
     final id = row['id'].toString();
+    _callCreatedAt = DateTime.tryParse(row['created_at']?.toString() ?? '')?.toLocal() ?? DateTime.now();
+    _callConnectedAt = null;
+    _callCallerId = row['caller_id']?.toString();
+    _callConversationId = row['conversation_id']?.toString();
     await _preparePeer(id);
     final offerText = row['offer_sdp']?.toString();
     if (offerText == null || offerText.isEmpty) throw Exception('A hívás ajánlata még nem érkezett meg.');
@@ -1450,6 +1564,7 @@ class _VoiceCallController {
     final answer = await _pc!.createAnswer();
     await _pc!.setLocalDescription(answer);
     await _db.from('voice_calls').update({'answer_sdp': answer.sdp, 'status': 'active'}).eq('id', id);
+    _callConnectedAt ??= DateTime.now();
     _watchCall(id);
   }
 
@@ -1457,12 +1572,27 @@ class _VoiceCallController {
     await _db.from('voice_calls').update({'status': 'declined'}).eq('id', id);
   }
 
-  Future<void> endCall() async {
+  Future<_VoiceCallSummary?> endCall() async {
     final id = callId;
+    final connectedAt = _callConnectedAt;
+    final createdAt = _callCreatedAt;
+    final callerId = _callCallerId;
+    final conversationId = _callConversationId;
+    final summary = connectedAt != null && createdAt != null && callerId != null &&
+            conversationId != null
+        ? _VoiceCallSummary(
+            conversationId: conversationId,
+            callerId: callerId,
+            calledAt: createdAt,
+            connectedAt: connectedAt,
+            endedAt: DateTime.now(),
+          )
+        : null;
     if (id != null) {
       try { await _db.from('voice_calls').update({'status': 'ended'}).eq('id', id); } catch (_) {}
     }
     await _disposeMedia();
+    return summary;
   }
 
   Future<void> toggleMute() async {
@@ -1492,6 +1622,10 @@ class _VoiceCallController {
     await _callChannel?.unsubscribe();
     _callChannel = null;
     callId = null;
+    _callCreatedAt = null;
+    _callConnectedAt = null;
+    _callCallerId = null;
+    _callConversationId = null;
     _pendingCandidates.clear();
     muted = false;
     speaker = true;
@@ -1501,6 +1635,24 @@ class _VoiceCallController {
     await _incomingSub?.cancel();
     await endCall();
   }
+}
+
+class _VoiceCallSummary {
+  final String conversationId;
+  final String callerId;
+  final DateTime calledAt;
+  final DateTime connectedAt;
+  final DateTime endedAt;
+
+  const _VoiceCallSummary({
+    required this.conversationId,
+    required this.callerId,
+    required this.calledAt,
+    required this.connectedAt,
+    required this.endedAt,
+  });
+
+  Duration get duration => endedAt.difference(connectedAt);
 }
 
 class ChatScreen extends StatefulWidget {
@@ -2457,7 +2609,8 @@ class _ChatScreenState extends State<ChatScreen> {
             FilledButton.icon(
               style: FilledButton.styleFrom(backgroundColor: const Color(0xFFB83D48)),
               onPressed: () async {
-                await _voiceCall.endCall();
+                final callSummary = await _voiceCall.endCall();
+                if (callSummary != null) await _sendCallLog(callSummary);
                 if (mounted) setState(() { _callActive = false; _callStarting = false; });
                 if (ctx.mounted) Navigator.pop(ctx);
               },
@@ -2546,6 +2699,58 @@ class _ChatScreenState extends State<ChatScreen> {
       await widget.onAccountDeleted();
     } catch (error) {
       _showError(error);
+    }
+  }
+
+  Future<void> _sendCallLog(_VoiceCallSummary summary) async {
+    try {
+      final callerName = (await _loadUsernames([summary.callerId]))[summary.callerId] ??
+          (summary.callerId == widget.currentUserId ? 'Te' : 'Ismeretlen felhasználó');
+      final duration = summary.duration;
+      final totalMinutes = duration.inMinutes;
+      final hours = totalMinutes ~/ 60;
+      final minutes = totalMinutes % 60;
+      final calledAt = DateFormat('HH:mm').format(summary.calledAt.toLocal());
+      final direction = summary.callerId == widget.currentUserId
+          ? 'Outgoing call'
+          : 'Incoming call';
+      final durationParts = <String>[];
+      if (hours > 0) {
+        durationParts.add('$hours ${hours == 1 ? 'hour' : 'hours'}');
+      }
+      if (minutes > 0 || hours == 0) {
+        durationParts.add('$minutes ${minutes == 1 ? 'minute' : 'minutes'}');
+      }
+      final logText = '$direction · $calledAt\n'
+          'Duration: ${durationParts.join(' ')}';
+
+      await _e2ee.ensureReady();
+      final participantRows = await Supabase.instance.client
+          .from('conversation_participants')
+          .select('user_id')
+          .eq('conversation_id', summary.conversationId);
+      final memberIds = participantRows
+          .map((row) => (row as Map<String, dynamic>)['user_id'].toString())
+          .toSet()
+          .toList();
+      final encryptedPayload = await _e2ee.encryptForConversation(
+        conversationId: summary.conversationId,
+        plaintext: logText,
+        memberIds: memberIds,
+      );
+      await Supabase.instance.client.rpc(
+        'insert_message_for_current_user',
+        params: {
+          'p_conversation_id': summary.conversationId,
+          'p_ciphertext': encryptedPayload,
+        },
+      );
+      if (_selectedConversation?.id == summary.conversationId) {
+        await _loadMessages(summary.conversationId);
+      }
+      await _refreshConversations();
+    } catch (error) {
+      _showError('A hívásnaplót nem sikerült üzenetként elküldeni: $error');
     }
   }
 
