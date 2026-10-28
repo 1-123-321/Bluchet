@@ -20,7 +20,7 @@ const AndroidNotificationChannel _bluchetNotificationChannel =
     AndroidNotificationChannel(
   'bluchet_messages_calls',
   'Bluchet üzenetek és hívások',
-  description: 'Bejövő KulcsKod-hívások értesítései.',
+  description: 'Bejövő Bluchet-hívások értesítései.',
   importance: Importance.max,
 );
 
@@ -95,7 +95,7 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
 
       if (url == null || anonKey == null || _userId == null ||
           url.isEmpty || anonKey.isEmpty || _userId!.isEmpty) {
-        debugPrint('KulcsKod call listener: missing service configuration.');
+        debugPrint('Bluchet call listener: missing service configuration.');
         return;
       }
 
@@ -115,7 +115,7 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
           ? account['refreshToken']?.toString()
           : null;
       if (refreshToken == null || refreshToken.isEmpty) {
-        debugPrint('KulcsKod call listener: no refresh token for active account.');
+        debugPrint('Bluchet call listener: no refresh token for active account.');
         return;
       }
 
@@ -142,8 +142,8 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
       await androidNotifications?.createNotificationChannel(
         const AndroidNotificationChannel(
           'kulcskod_incoming_calls',
-          'KulcsKod bejövő hívások',
-          description: 'Bejövő KulcsKod hanghívások értesítései.',
+          'Bluchet bejövő hívások',
+          description: 'Bejövő Bluchet hanghívások értesítései.',
           importance: Importance.max,
         ),
       );
