@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -18,10 +17,12 @@ final FlutterLocalNotificationsPlugin _localNotifications =
 
 const AndroidNotificationChannel _bluchetNotificationChannel =
     AndroidNotificationChannel(
-  'bluchet_messages_calls',
+  'bluchet_messages_calls_v3',
   'Bluchet üzenetek és hívások',
-  description: 'Bejövő KulcsKod-hívások értesítései.',
+  description: 'Üzenetek és bejövő Bluchet-hívások értesítései.',
   importance: Importance.max,
+  playSound: true,
+  enableVibration: true,
 );
 
 Future<void> _initializeLocalNotifications() async {
@@ -55,7 +56,7 @@ Future<void> _showLocalNotification({
 }) async {
   const details = NotificationDetails(
     android: AndroidNotificationDetails(
-      'bluchet_messages_calls',
+      'bluchet_messages_calls_v3',
       'Bluchet üzenetek és hívások',
       channelDescription: 'Új üzenetek és bejövő hívások értesítései.',
       importance: Importance.max,
@@ -141,10 +142,12 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
               AndroidFlutterLocalNotificationsPlugin>();
       await androidNotifications?.createNotificationChannel(
         const AndroidNotificationChannel(
-          'kulcskod_incoming_calls',
-          'KulcsKod bejövő hívások',
-          description: 'Bejövő KulcsKod hanghívások értesítései.',
+          'bluchet_incoming_calls_v3',
+          'Bluchet bejövő hívások',
+          description: 'Bejövő Bluchet hanghívások értesítései.',
           importance: Importance.max,
+          playSound: true,
+          enableVibration: true,
         ),
       );
 
@@ -221,13 +224,13 @@ class _KulcsKodForegroundTaskHandler extends TaskHandler {
       final notificationId = callId.hashCode & 0x7fffffff;
       await _notifications.show(
         notificationId,
-        'Bejövő KulcsKod-hívás',
+        'Bejövő Bluchet-hívás',
         'Valaki hanghívást indított neked.',
         const NotificationDetails(
           android: AndroidNotificationDetails(
-            'kulcskod_incoming_calls',
-            'KulcsKod bejövő hívások',
-            channelDescription: 'Bejövő KulcsKod hanghívások értesítései.',
+            'bluchet_incoming_calls_v3',
+            'Bluchet bejövő hívások',
+            channelDescription: 'Bejövő Bluchet hanghívások értesítései.',
             importance: Importance.max,
             priority: Priority.high,
             category: AndroidNotificationCategory.call,
@@ -316,7 +319,7 @@ Future<void> _startBackgroundService(String userId) async {
       notificationText: 'Bejövő hívások figyelése aktív.',
       callback: kulcsKodForegroundTaskStart,
       notificationInitialRoute: '/',
-      serviceTypes: [ForegroundServiceTypes.dataSync],
+      serviceTypes: [ForegroundServiceTypes.remoteMessaging],
     );
   }
 }
@@ -421,21 +424,21 @@ class BluchetPalette {
   static const Color royalBlue800 = Color(0xFF315DC8);
   static const Color royalBlue900 = Color(0xFF2347A7);
 
-  // Colors adapted from the latest Bluchet DB Console v4 HTML.
-  static const Color primary = Color(0xFF4D8DFF);
-  static const Color primaryDark = Color(0xFF244E9A);
-  static const Color accent = Color(0xFF42D7D0);
-  static const Color accentDark = Color(0xFF24A9A5);
-  static const Color background = Color(0xFF07121B);
-  static const Color card = Color(0xFF0D202B);
-  static const Color surface = Color(0xFF123440);
-  static const Color text = Color(0xFFE4F6FA);
-  static const Color textMuted = Color(0xFF8EABB5);
-  static const Color inputText = Color(0xFFE4F6FA);
-  static const Color inputLabel = Color(0xFF8EABB5);
-  static const Color success = Color(0xFF68E0A5);
-  static const Color error = Color(0xFFFF737D);
-  static const Color dangerSoft = Color(0xFF351A22);
+  static const Color primary = royalBlue700;
+  static const Color primaryDark = royalBlue900;
+  static const Color accent = turquoise800;
+  static const Color accentDark = turquoise900;
+  static const Color background = Color(0xFF15191B);
+  static const Color card = Color(0xFF202629);
+  static const Color surface = Color(0xFF293235);
+  static const Color text = Color(0xFFE8F0EF);
+  static const Color textMuted = Color(0xFFB2C0BE);
+  static const Color inputText = Color(0xFFF0F5F4);
+  static const Color inputLabel = Color(0xFFB0BFBC);
+  static const Color success = Color(0xFF1A8A89);
+  // Errors use a clear yellow warning color instead of red.
+  static const Color error = Color(0xFFFFD45C);
+  static const Color dangerSoft = Color(0xFF3B3522);
 }
 
 class BluchetTheme {
@@ -462,7 +465,7 @@ class BluchetTheme {
 
     return base.copyWith(
       appBarTheme: const AppBarTheme(
-        backgroundColor: BluchetPalette.card,
+        backgroundColor: BluchetPalette.primary,
         foregroundColor: Color(0xFFF4F7F7),
         elevation: 0,
         toolbarHeight: 52,
@@ -473,19 +476,19 @@ class BluchetTheme {
         color: BluchetPalette.card,
         elevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
         ),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: const Color(0xFF06131C),
+        fillColor: const Color(0xFF252D30),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: Color(0xFF244653)),
+          borderSide: const BorderSide(color: BluchetPalette.royalBlue200),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: Color(0xFF244653)),
+          borderSide: const BorderSide(color: BluchetPalette.royalBlue200),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
@@ -1149,7 +1152,6 @@ class _AuthScreenState extends State<AuthScreen> {
       } else {
         await widget.onLogin(username, password);
       }
-      TextInput.finishAutofillContext(shouldSave: true);
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -1210,35 +1212,19 @@ class _AuthScreenState extends State<AuthScreen> {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    AutofillGroup(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          TextField(
-                            controller: _usernameController,
-                            style: const TextStyle(color: BluchetPalette.inputText),
-                            autofillHints: const [AutofillHints.username],
-                            keyboardType: TextInputType.text,
-                            autocorrect: false,
-                            enableSuggestions: false,
-                            textCapitalization: TextCapitalization.none,
-                            textInputAction: TextInputAction.next,
-                            decoration: const InputDecoration(labelText: 'Username'),
-                          ),
-                          const SizedBox(height: 10),
-                          TextField(
-                            controller: _passwordController,
-                            style: const TextStyle(color: BluchetPalette.inputText),
-                            autofillHints: const [AutofillHints.password],
-                            obscureText: true,
-                            autocorrect: false,
-                            enableSuggestions: false,
-                            textInputAction: TextInputAction.done,
-                            onSubmitted: (_) => _submit(),
-                            decoration: const InputDecoration(labelText: 'Password'),
-                          ),
-                        ],
-                      ),
+                    TextField(
+                      controller: _usernameController,
+                      style: const TextStyle(color: BluchetPalette.inputText),
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(labelText: 'Username'),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _passwordController,
+                      style: const TextStyle(color: BluchetPalette.inputText),
+                      obscureText: true,
+                      onSubmitted: (_) => _submit(),
+                      decoration: const InputDecoration(labelText: 'Password'),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 10),
@@ -1517,56 +1503,6 @@ class _VoiceCallController {
   }
 }
 
-class _CallActionButton extends StatelessWidget {
-  const _CallActionButton({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.onTap,
-    this.large = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-  final bool large;
-
-  @override
-  Widget build(BuildContext context) {
-    final iconSize = large ? 34.0 : 30.0;
-    final circleSize = large ? 82.0 : 68.0;
-    return Semantics(
-      button: true,
-      label: label,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(24),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: circleSize,
-                height: circleSize,
-                decoration: BoxDecoration(
-                  color: color,
-                  shape: BoxShape.circle,
-                  boxShadow: [BoxShadow(color: color.withOpacity(.18), blurRadius: 20, spreadRadius: 2)],
-                ),
-                child: Icon(icon, size: iconSize, color: const Color(0xFF07121B)),
-              ),
-              const SizedBox(height: 10),
-              Text(label, textAlign: TextAlign.center, style: const TextStyle(color: BluchetPalette.text, fontSize: 13, fontWeight: FontWeight.w600)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class ChatScreen extends StatefulWidget {
   final String currentUserId;
   final Future<void> Function() onLogout;
@@ -1591,6 +1527,8 @@ class _ChatScreenState extends State<ChatScreen> {
   Map<String, dynamic>? _incomingCall;
   bool _callActive = false;
   bool _callStarting = false;
+  Timer? _incomingRingTimer;
+  String? _ringingCallId;
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _messageController = TextEditingController();
@@ -1599,10 +1537,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool _loading = true;
   String? _error;
-  bool _isAdmin = false;
-  bool _checkingAdmin = true;
-  bool _grantingAdmin = false;
-  final TextEditingController _adminUsernameController = TextEditingController();
   List<_UserSearchResult> _searchResults = const [];
   int _searchRequestGeneration = 0;
   bool _searchingUsers = false;
@@ -1626,7 +1560,6 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mounted) unawaited(_requestNotificationPermission());
     });
     _e2ee = _BluchetE2ee(widget.currentUserId, const FlutterSecureStorage());
-    unawaited(_refreshAdminStatus());
     // Generate/load and register this account's E2EE key automatically.
     // Failures remain retryable and are surfaced instead of silently ignored.
     _e2ee.ensureReady().catchError((Object error) {
@@ -1634,6 +1567,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     _voiceCall = _VoiceCallController(userId: widget.currentUserId, onIncoming: (call) {
       if (!mounted || _incomingCall != null || _callActive) return;
+      _startIncomingRing(call['id']?.toString());
       final callerId = call['caller_id']?.toString() ?? '';
       _loadUsernames(callerId.isEmpty ? <String>[] : <String>[callerId])
           .then((names) {
@@ -1654,8 +1588,9 @@ class _ChatScreenState extends State<ChatScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _showIncomingCallDialog(call); });
     });
     _voiceCall.listenForIncoming();
-    // E2EE initialization is already started above. Avoid starting a second
-    // duplicate error handler for the same Future.
+    _e2ee.ensureReady().catchError((Object error) {
+      debugPrint('Bluchet E2EE initialization failed: $error');
+    });
     _refreshConversations();
 
     // Poll only the currently open conversation. This makes incoming messages
@@ -1681,12 +1616,12 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _messageRefreshTimer?.cancel();
+    _stopIncomingRing();
     _voiceCall.dispose();
     _scrollController.dispose();
     _searchController.dispose();
     _messageController.dispose();
     _groupNameController.dispose();
-    _adminUsernameController.dispose();
     super.dispose();
   }
 
@@ -2408,6 +2343,29 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _startIncomingRing(String? callId) {
+    if (callId == null || callId.isEmpty || _ringingCallId == callId) return;
+    _stopIncomingRing();
+    _ringingCallId = callId;
+    // Android's call notification provides the normal notification sound in
+    // the background. While the app is open, repeat the system alert so the
+    // incoming call is audible without bundling an extra audio dependency.
+    unawaited(SystemSound.play(SystemSoundType.alert));
+    _incomingRingTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_ringingCallId != callId || !mounted) {
+        _stopIncomingRing();
+        return;
+      }
+      unawaited(SystemSound.play(SystemSoundType.alert));
+    });
+  }
+
+  void _stopIncomingRing() {
+    _incomingRingTimer?.cancel();
+    _incomingRingTimer = null;
+    _ringingCallId = null;
+  }
+
   Future<void> _showIncomingCallDialog(Map<String, dynamic> call) async {
     if (!mounted) return;
     final callerId = call['caller_id']?.toString() ?? '';
@@ -2417,49 +2375,17 @@ class _ChatScreenState extends State<ChatScreen> {
     final accept = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => Dialog.fullscreen(
-        child: Scaffold(
-          backgroundColor: BluchetPalette.background,
-          body: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-              child: Column(
-                children: [
-                  const Align(alignment: Alignment.topLeft, child: Icon(Icons.graphic_eq, color: BluchetPalette.accent, size: 30)),
-                  const Spacer(),
-                  Container(
-                    width: 156, height: 156,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: const Color(0xFF103743),
-                      border: Border.all(color: BluchetPalette.accent.withOpacity(.7), width: 2),
-                      boxShadow: [BoxShadow(color: BluchetPalette.accent.withOpacity(.14), blurRadius: 34, spreadRadius: 8)],
-                    ),
-                    child: const Icon(Icons.person_rounded, size: 86, color: BluchetPalette.accent),
-                  ),
-                  const SizedBox(height: 28),
-                  Text(callerName, textAlign: TextAlign.center, style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800, color: BluchetPalette.text)),
-                  const SizedBox(height: 10),
-                  const Text('Bejövő hanghívás', style: TextStyle(fontSize: 16, color: BluchetPalette.textMuted)),
-                  const SizedBox(height: 8),
-                  const Text('BLUCHET  /  HÍVÁS', style: TextStyle(fontSize: 11, letterSpacing: 2.2, fontWeight: FontWeight.w700, color: BluchetPalette.accent)),
-                  const Spacer(),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _CallActionButton(icon: Icons.call_end_rounded, label: 'Elutasítás', color: const Color(0xFFFF737D), onTap: () => Navigator.pop(ctx, false)),
-                      _CallActionButton(icon: Icons.call_rounded, label: 'Fogadás', color: const Color(0xFF68E0A5), onTap: () => Navigator.pop(ctx, true)),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                ],
-              ),
-            ),
-          ),
-        ),
+      builder: (ctx) => AlertDialog(
+        title: const Text('📞 Bejövő hanghívás'),
+        content: Text('$callerName hív téged.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Elutasítás')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Fogadás')),
+        ],
       ),
     );
     if (!mounted) return;
+    _stopIncomingRing();
     setState(() => _incomingCall = null);
     if (accept != true) {
       try { await _voiceCall.declineCall(call['id'].toString()); } catch (e) { _showError(e); }
@@ -2468,7 +2394,6 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       setState(() { _callStarting = true; _callActive = true; });
       await _voiceCall.acceptCall(call);
-      if (mounted) setState(() => _callStarting = false);
       if (mounted) _showCallControls(callerName);
     } catch (e) {
       await _voiceCall.endCall();
@@ -2502,71 +2427,43 @@ class _ChatScreenState extends State<ChatScreen> {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => Dialog.fullscreen(
-        child: StatefulBuilder(
-          builder: (ctx, setDialogState) => Scaffold(
-            backgroundColor: BluchetPalette.background,
-            body: SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-                child: Column(
-                  children: [
-                    const Align(alignment: Alignment.topLeft, child: Icon(Icons.graphic_eq, color: BluchetPalette.accent, size: 30)),
-                    const Spacer(),
-                    Container(
-                      width: 142, height: 142,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: const Color(0xFF103743),
-                        border: Border.all(color: BluchetPalette.accent.withOpacity(.55), width: 2),
-                      ),
-                      child: const Icon(Icons.person_rounded, size: 78, color: BluchetPalette.accent),
-                    ),
-                    const SizedBox(height: 24),
-                    Text(peerName, textAlign: TextAlign.center, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: BluchetPalette.text)),
-                    const SizedBox(height: 10),
-                    Text(
-                      _voiceCall.callId == null ? 'Hívás befejezve' : (_callStarting ? 'Kapcsolódás…' : 'Hanghívás folyamatban'),
-                      style: const TextStyle(fontSize: 15, color: BluchetPalette.textMuted),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text('BLUCHET  /  HÍVÁS', style: TextStyle(fontSize: 11, letterSpacing: 2.2, fontWeight: FontWeight.w700, color: BluchetPalette.accent)),
-                    const Spacer(),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        _CallActionButton(
-                          icon: _voiceCall.muted ? Icons.mic_off_rounded : Icons.mic_rounded,
-                          label: _voiceCall.muted ? 'Mikrofon be' : 'Némítás',
-                          color: _voiceCall.muted ? BluchetPalette.accent : const Color(0xFF204451),
-                          onTap: () async { await _voiceCall.toggleMute(); setDialogState(() {}); },
-                        ),
-                        _CallActionButton(
-                          icon: _voiceCall.speaker ? Icons.volume_up_rounded : Icons.hearing_rounded,
-                          label: _voiceCall.speaker ? 'Hangszóró' : 'Fülhallgató',
-                          color: _voiceCall.speaker ? BluchetPalette.accent : const Color(0xFF204451),
-                          onTap: () async { await _voiceCall.toggleSpeaker(); setDialogState(() {}); },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 34),
-                    _CallActionButton(
-                      icon: Icons.call_end_rounded,
-                      label: 'Hívás befejezése',
-                      color: const Color(0xFFFF737D),
-                      large: true,
-                      onTap: () async {
-                        await _voiceCall.endCall();
-                        if (mounted) setState(() { _callActive = false; _callStarting = false; });
-                        if (ctx.mounted) Navigator.pop(ctx);
-                      },
-                    ),
-                    const SizedBox(height: 18),
-                  ],
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Bluchet hanghívás'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.call, color: BluchetPalette.turquoise500, size: 42),
+              const SizedBox(height: 12),
+              Text(peerName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Text(_voiceCall.callId == null ? 'Hívás befejezve' : 'Hívás folyamatban / kapcsolódás…'),
+              const SizedBox(height: 14),
+              Wrap(spacing: 8, children: [
+                OutlinedButton.icon(
+                  onPressed: () async { await _voiceCall.toggleMute(); setDialogState(() {}); },
+                  icon: Icon(_voiceCall.muted ? Icons.mic_off : Icons.mic),
+                  label: Text(_voiceCall.muted ? 'Mikrofon be' : 'Némítás'),
                 ),
-              ),
-            ),
+                OutlinedButton.icon(
+                  onPressed: () async { await _voiceCall.toggleSpeaker(); setDialogState(() {}); },
+                  icon: Icon(_voiceCall.speaker ? Icons.volume_up : Icons.hearing),
+                  label: Text(_voiceCall.speaker ? 'Hangszóró' : 'Fülhallgató'),
+                ),
+              ]),
+            ],
           ),
+          actions: [
+            FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: const Color(0xFFB83D48)),
+              onPressed: () async {
+                await _voiceCall.endCall();
+                if (mounted) setState(() { _callActive = false; _callStarting = false; });
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              icon: const Icon(Icons.call_end), label: const Text('Hívás befejezése'),
+            ),
+          ],
         ),
       ),
     );
@@ -2652,169 +2549,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> _refreshAdminStatus() async {
-    try {
-      final result = await Supabase.instance.client.rpc('is_bluchet_admin');
-      if (!mounted) return;
-      setState(() {
-        _isAdmin = result == true;
-        _checkingAdmin = false;
-      });
-    } catch (error) {
-      // Missing admin migration or denied access must never grant admin UI.
-      if (!mounted) return;
-      setState(() {
-        _isAdmin = false;
-        _checkingAdmin = false;
-      });
-      debugPrint('Bluchet admin status unavailable: $error');
-    }
-  }
-
-  Future<void> _showAdminManagementDialog() async {
-    if (!_isAdmin || !mounted) return;
-    _adminUsernameController.clear();
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Text('Admin hozzáadása'),
-          content: SizedBox(
-            width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Add meg a már regisztrált Bluchet-felhasználónevét.'),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _adminUsernameController,
-                  autofocus: true,
-                  autocorrect: false,
-                  textInputAction: TextInputAction.done,
-                  decoration: const InputDecoration(
-                    labelText: 'Felhasználónév',
-                    hintText: 'pl. sea',
-                  ),
-                  onSubmitted: (_) async {
-                    if (_grantingAdmin) return;
-                    setDialogState(() => _grantingAdmin = true);
-                    try {
-                      await Supabase.instance.client.rpc(
-                        'grant_bluchet_admin_by_username',
-                        params: {
-                          'p_username': _adminUsernameController.text.trim(),
-                        },
-                      );
-                      if (dialogContext.mounted) Navigator.of(dialogContext).pop();
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Az adminjogot sikeresen megadtuk.')),
-                        );
-                      }
-                    } catch (error) {
-                      if (dialogContext.mounted) {
-                        setDialogState(() => _grantingAdmin = false);
-                        ScaffoldMessenger.of(dialogContext).showSnackBar(
-                          SnackBar(content: Text('Nem sikerült adminná tenni: $error')),
-                        );
-                      }
-                    }
-                  },
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: _grantingAdmin ? null : () => Navigator.of(dialogContext).pop(),
-              child: const Text('Mégse'),
-            ),
-            FilledButton.icon(
-              onPressed: _grantingAdmin
-                  ? null
-                  : () async {
-                      setDialogState(() => _grantingAdmin = true);
-                      try {
-                        await Supabase.instance.client.rpc(
-                          'grant_bluchet_admin_by_username',
-                          params: {
-                            'p_username': _adminUsernameController.text.trim(),
-                          },
-                        );
-                        if (dialogContext.mounted) Navigator.of(dialogContext).pop();
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Az adminjogot sikeresen megadtuk.')),
-                          );
-                        }
-                      } catch (error) {
-                        if (dialogContext.mounted) setDialogState(() => _grantingAdmin = false);
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Nem sikerült adminná tenni: $error')),
-                          );
-                        }
-                      }
-                    },
-              icon: _grantingAdmin
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.admin_panel_settings),
-              label: const Text('Admin hozzáadása'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _deleteMessage(_Message message) async {
-    if (message.senderId != widget.currentUserId) {
-      _showError('Csak a saját üzenetedet törölheted.');
-      return;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Üzenet törlése'),
-        content: const Text('Biztosan törlöd ezt az üzenetet? Ez a művelet nem vonható vissza.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Mégse'),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            icon: const Icon(Icons.delete_outline),
-            label: const Text('Törlés'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      // RLS must allow users to delete their own message rows only.
-      final deletedRows = await Supabase.instance.client
-          .from('messages')
-          .delete()
-          .eq('id', message.id)
-          .eq('sender_id', widget.currentUserId)
-          .select('id');
-      if (deletedRows.isEmpty) {
-        throw Exception('A szerver nem engedte a törlést (RLS), vagy az üzenet már nem létezik.');
-      }
-      final conversationId = _selectedConversation?.id;
-      if (conversationId != null) await _loadMessages(conversationId);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Üzenet törölve.')),
-        );
-      }
-    } catch (error) {
-      _showError('Nem sikerült törölni az üzenetet. Ellenőrizd a messages DELETE RLS-szabályát. $error');
-    }
-  }
-
   Future<void> _sendMessage() async {
     final conversation = _selectedConversation;
     final text = _messageController.text.trim();
@@ -2868,20 +2602,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 onPressed: () => setState(() => _showConversationScreen = false),
               )
             : null,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _showConversationScreen && _selectedConversation != null
-                  ? (_selectedConversation!.isGroup
-                      ? _selectedConversation!.title
-                      : _selectedConversation!.otherUsername)
-                  : 'Bluchet',
-            ),
-            if (_showConversationScreen)
-              const _BluchetPulseIndicator(),
-          ],
+        title: Text(
+          _showConversationScreen && _selectedConversation != null
+              ? (_selectedConversation!.isGroup
+                  ? _selectedConversation!.title
+                  : _selectedConversation!.otherUsername)
+              : 'Bluchet',
         ),
         actions: [
           if (_showConversationScreen &&
@@ -2955,13 +2681,6 @@ class _ChatScreenState extends State<ChatScreen> {
               icon: Icon(_callStarting ? Icons.hourglass_top : Icons.call),
               color: BluchetPalette.turquoise300,
             ),
-          if (!_checkingAdmin && _isAdmin)
-            IconButton(
-              tooltip: 'Admin hozzáadása',
-              onPressed: _showAdminManagementDialog,
-              icon: const Icon(Icons.admin_panel_settings),
-              color: BluchetPalette.turquoise300,
-            ),
           IconButton(
             tooltip: 'Fiókváltás',
             onPressed: widget.onSwitchAccount,
@@ -2997,7 +2716,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 senderUsernames: _senderUsernames,
                 error: _error,
                 onSend: _sendMessage,
-                onDeleteMessage: _deleteMessage,
               ),
             )
           : _loading
@@ -3257,7 +2975,6 @@ class _ConversationDetailView extends StatelessWidget {
   final Map<String, String> senderUsernames;
   final String? error;
   final Future<void> Function() onSend;
-  final Future<void> Function(_Message message) onDeleteMessage;
 
   const _ConversationDetailView({
     required this.conversation,
@@ -3268,7 +2985,6 @@ class _ConversationDetailView extends StatelessWidget {
     required this.senderUsernames,
     required this.error,
     required this.onSend,
-    required this.onDeleteMessage,
   });
 
   @override
@@ -3364,11 +3080,7 @@ class _ConversationDetailView extends StatelessWidget {
                       alignment: isMine
                           ? Alignment.centerRight
                           : Alignment.centerLeft,
-                      child: GestureDetector(
-                        onLongPress: isMine
-                            ? () => onDeleteMessage(message)
-                            : null,
-                        child: Container(
+                      child: Container(
                         margin: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 4),
                         padding: const EdgeInsets.all(10),
@@ -3410,7 +3122,6 @@ class _ConversationDetailView extends StatelessWidget {
                               ),
                             ),
                           ],
-                        ),
                         ),
                       ),
                     );
@@ -3455,64 +3166,6 @@ class _ConversationDetailView extends StatelessWidget {
           ),
         ),
             ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _BluchetPulseIndicator extends StatefulWidget {
-  const _BluchetPulseIndicator();
-
-  @override
-  State<_BluchetPulseIndicator> createState() => _BluchetPulseIndicatorState();
-}
-
-class _BluchetPulseIndicatorState extends State<_BluchetPulseIndicator>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1100),
-  )..repeat(reverse: true);
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        AnimatedBuilder(
-          animation: _controller,
-          builder: (context, child) => Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(
-              color: Color.lerp(const Color(0xFF247E78), const Color(0xFF42D7D0), _controller.value),
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF42D7D0).withOpacity(0.15 + 0.45 * _controller.value),
-                  blurRadius: 4 + 5 * _controller.value,
-                  spreadRadius: _controller.value,
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(width: 5),
-        const Text(
-          'BLUCHET PULSE · élő frissítés',
-          style: TextStyle(
-            color: Color(0xFF42D7D0),
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 0.35,
           ),
         ),
       ],
