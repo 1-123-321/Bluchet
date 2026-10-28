@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
@@ -2710,7 +2711,8 @@ class _ChatScreenState extends State<ChatScreen> {
       final totalMinutes = duration.inMinutes;
       final hours = totalMinutes ~/ 60;
       final minutes = totalMinutes % 60;
-      final calledAt = DateFormat('HH:mm').format(summary.calledAt.toLocal());
+      final localCallTime = summary.calledAt.toLocal();
+      final calledAt = '${localCallTime.hour.toString().padLeft(2, '0')}:${localCallTime.minute.toString().padLeft(2, '0')}';
       final direction = summary.callerId == widget.currentUserId
           ? 'Outgoing call'
           : 'Incoming call';
