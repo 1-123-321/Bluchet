@@ -317,10 +317,10 @@ Future<void> _startBackgroundService(String userId) async {
       notificationText: 'Bejövő hívások figyelése aktív.',
       callback: kulcsKodForegroundTaskStart,
       notificationInitialRoute: '/',
-      serviceTypes: [
-        ForegroundServiceTypes.dataSync,
-        ForegroundServiceTypes.remoteMessaging,
-      ],
+      // This service maintains the incoming-call signaling connection.
+      // Keep it classified as remote messaging rather than dataSync, which
+      // has a separate Android timeout policy on newer Android versions.
+      serviceTypes: [ForegroundServiceTypes.remoteMessaging],
     );
   }
 }
@@ -1302,6 +1302,7 @@ class _VoiceCallController {
   String? callId;
   bool muted = false;
   bool speaker = true;
+  Future<void>? _disposeMediaFuture;
   bool _handlingRemoteCandidates = false;
   bool _hasRemoteDescription = false;
   DateTime? _callCreatedAt;
@@ -1323,6 +1324,8 @@ class _VoiceCallController {
   }
 
   Future<void> _preparePeer(String id) async {
+    final cleanup = _disposeMediaFuture;
+    if (cleanup != null) await cleanup;
     callId = id;
     _hasRemoteDescription = false;
     _pc = await createPeerConnection({
@@ -1526,20 +1529,34 @@ class _VoiceCallController {
     await Helper.setSpeakerphoneOn(speaker);
   }
 
-  Future<void> _disposeMedia() async {
+  Future<void> _disposeMedia() {
+    // Supabase can report the call as ended while endCall() is also cleaning
+    // up. Share one cleanup future so the native WebRTC peer connection and
+    // audio tracks are never closed concurrently from two callbacks.
+    final existing = _disposeMediaFuture;
+    if (existing != null) return existing;
+
+    final operation = _disposeMediaInternal();
+    _disposeMediaFuture = operation;
+    return operation.whenComplete(() {
+      if (identical(_disposeMediaFuture, operation)) {
+        _disposeMediaFuture = null;
+      }
+    });
+  }
+
+  Future<void> _disposeMediaInternal() async {
+    // Detach resources synchronously before the first await, so a second
+    // callback cannot acquire and dispose the same native objects.
     final stream = _localStream;
+    final peer = _pc;
+    final candidateChannel = _candidateChannel;
+    final callChannel = _callChannel;
     _localStream = null;
-    if (stream != null) {
-      for (final track in stream.getTracks()) { await track.stop(); }
-      await stream.dispose();
-    }
-    await _pc?.close();
     _pc = null;
-    _hasRemoteDescription = false;
-    await _candidateChannel?.unsubscribe();
     _candidateChannel = null;
-    await _callChannel?.unsubscribe();
     _callChannel = null;
+    _hasRemoteDescription = false;
     callId = null;
     _callCreatedAt = null;
     _callConnectedAt = null;
@@ -1548,6 +1565,26 @@ class _VoiceCallController {
     _pendingCandidates.clear();
     muted = false;
     speaker = true;
+
+    if (stream != null) {
+      for (final track in stream.getTracks()) {
+        try { await track.stop(); } catch (e) {
+          debugPrint('WebRTC track stop failed: $e');
+        }
+      }
+      try { await stream.dispose(); } catch (e) {
+        debugPrint('WebRTC stream dispose failed: $e');
+      }
+    }
+    try { await peer?.close(); } catch (e) {
+      debugPrint('WebRTC peer close failed: $e');
+    }
+    try { await candidateChannel?.unsubscribe(); } catch (e) {
+      debugPrint('ICE channel unsubscribe failed: $e');
+    }
+    try { await callChannel?.unsubscribe(); } catch (e) {
+      debugPrint('Call channel unsubscribe failed: $e');
+    }
   }
 
   Future<void> dispose() async {
