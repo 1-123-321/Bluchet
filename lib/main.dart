@@ -317,7 +317,10 @@ Future<void> _startBackgroundService(String userId) async {
       notificationText: 'Bejövő hívások figyelése aktív.',
       callback: kulcsKodForegroundTaskStart,
       notificationInitialRoute: '/',
-      serviceTypes: [ForegroundServiceTypes.dataSync],
+      serviceTypes: [
+        ForegroundServiceTypes.dataSync,
+        ForegroundServiceTypes.remoteMessaging,
+      ],
     );
   }
 }
