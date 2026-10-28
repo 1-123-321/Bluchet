@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -21,7 +20,7 @@ const AndroidNotificationChannel _bluchetNotificationChannel =
     AndroidNotificationChannel(
   'bluchet_messages_calls',
   'Bluchet üzenetek és hívások',
-  description: 'Bejövő KulcsKod-hívások értesítései.',
+  description: 'Bejövő Bluchet-hívások értesítései.',
   importance: Importance.max,
 );
 
@@ -1301,6 +1300,10 @@ class _VoiceCallController {
   bool speaker = true;
   bool _handlingRemoteCandidates = false;
   bool _hasRemoteDescription = false;
+  DateTime? _callCreatedAt;
+  DateTime? _callConnectedAt;
+  String? _callCallerId;
+  String? _callConversationId;
   final List<RTCIceCandidate> _pendingCandidates = [];
 
   Future<void> listenForIncoming() async {
@@ -1405,8 +1408,12 @@ class _VoiceCallController {
       'caller_id': userId,
       'callee_id': calleeId,
       'status': 'ringing',
-    }).select('id').single();
+    }).select('id, created_at').single();
     final id = row['id'].toString();
+    _callCreatedAt = DateTime.tryParse(row['created_at']?.toString() ?? '')?.toLocal() ?? DateTime.now();
+    _callConnectedAt = null;
+    _callCallerId = userId;
+    _callConversationId = conversationId;
     try {
       await _preparePeer(id);
     } catch (error) {
@@ -1434,6 +1441,9 @@ class _VoiceCallController {
         filter: PostgresChangeFilter(type: PostgresChangeFilterType.eq, column: 'id', value: id),
         callback: (payload) async {
           final row = payload.newRecord;
+          if (row['status'] == 'active') {
+            _callConnectedAt ??= DateTime.now();
+          }
           if (row['status'] == 'ended' || row['status'] == 'declined' || row['status'] == 'missed') {
             await _disposeMedia();
           } else if (row['answer_sdp'] != null &&
@@ -1454,6 +1464,10 @@ class _VoiceCallController {
 
   Future<void> acceptCall(Map<String, dynamic> row) async {
     final id = row['id'].toString();
+    _callCreatedAt = DateTime.tryParse(row['created_at']?.toString() ?? '')?.toLocal() ?? DateTime.now();
+    _callConnectedAt = null;
+    _callCallerId = row['caller_id']?.toString();
+    _callConversationId = row['conversation_id']?.toString();
     await _preparePeer(id);
     final offerText = row['offer_sdp']?.toString();
     if (offerText == null || offerText.isEmpty) throw Exception('A hívás ajánlata még nem érkezett meg.');
@@ -1465,6 +1479,7 @@ class _VoiceCallController {
     final answer = await _pc!.createAnswer();
     await _pc!.setLocalDescription(answer);
     await _db.from('voice_calls').update({'answer_sdp': answer.sdp, 'status': 'active'}).eq('id', id);
+    _callConnectedAt ??= DateTime.now();
     _watchCall(id);
   }
 
@@ -1472,12 +1487,27 @@ class _VoiceCallController {
     await _db.from('voice_calls').update({'status': 'declined'}).eq('id', id);
   }
 
-  Future<void> endCall() async {
+  Future<_VoiceCallSummary?> endCall() async {
     final id = callId;
+    final connectedAt = _callConnectedAt;
+    final createdAt = _callCreatedAt;
+    final callerId = _callCallerId;
+    final conversationId = _callConversationId;
+    final summary = connectedAt != null && createdAt != null && callerId != null &&
+            conversationId != null
+        ? _VoiceCallSummary(
+            conversationId: conversationId,
+            callerId: callerId,
+            calledAt: createdAt,
+            connectedAt: connectedAt,
+            endedAt: DateTime.now(),
+          )
+        : null;
     if (id != null) {
       try { await _db.from('voice_calls').update({'status': 'ended'}).eq('id', id); } catch (_) {}
     }
     await _disposeMedia();
+    return summary;
   }
 
   Future<void> toggleMute() async {
@@ -1507,6 +1537,10 @@ class _VoiceCallController {
     await _callChannel?.unsubscribe();
     _callChannel = null;
     callId = null;
+    _callCreatedAt = null;
+    _callConnectedAt = null;
+    _callCallerId = null;
+    _callConversationId = null;
     _pendingCandidates.clear();
     muted = false;
     speaker = true;
@@ -1517,6 +1551,26 @@ class _VoiceCallController {
     await endCall();
   }
 }
+
+
+class _VoiceCallSummary {
+  final String conversationId;
+  final String callerId;
+  final DateTime calledAt;
+  final DateTime connectedAt;
+  final DateTime endedAt;
+
+  const _VoiceCallSummary({
+    required this.conversationId,
+    required this.callerId,
+    required this.calledAt,
+    required this.connectedAt,
+    required this.endedAt,
+  });
+
+  Duration get duration => endedAt.difference(connectedAt);
+}
+
 
 class _CallActionButton extends StatelessWidget {
   const _CallActionButton({
@@ -2670,7 +2724,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       color: const Color(0xFFFF737D),
                       large: true,
                       onTap: () async {
-                        await _voiceCall.endCall();
+                        final callSummary = await _voiceCall.endCall();
+                        if (callSummary != null) await _sendCallLog(callSummary);
                         if (mounted) setState(() { _callActive = false; _callStarting = false; });
                         if (ctx.mounted) Navigator.pop(ctx);
                       },
@@ -2928,6 +2983,58 @@ class _ChatScreenState extends State<ChatScreen> {
       _showError('Nem sikerült törölni az üzenetet. Ellenőrizd a messages DELETE RLS-szabályát. $error');
     }
   }
+
+  Future<void> _sendCallLog(_VoiceCallSummary summary) async {
+    try {
+      final duration = summary.duration;
+      final totalMinutes = duration.inMinutes;
+      final hours = totalMinutes ~/ 60;
+      final minutes = totalMinutes % 60;
+      final localCallTime = summary.calledAt.toLocal();
+      final calledAt = '${localCallTime.hour.toString().padLeft(2, '0')}:${localCallTime.minute.toString().padLeft(2, '0')}';
+      final direction = summary.callerId == widget.currentUserId
+          ? 'Outgoing call'
+          : 'Incoming call';
+      final durationParts = <String>[];
+      if (hours > 0) {
+        durationParts.add('$hours ${hours == 1 ? 'hour' : 'hours'}');
+      }
+      if (minutes > 0 || hours == 0) {
+        durationParts.add('$minutes ${minutes == 1 ? 'minute' : 'minutes'}');
+      }
+      final logText = '$direction · $calledAt\n'
+          'Duration: ${durationParts.join(' ')}';
+
+      await _e2ee.ensureReady();
+      final participantRows = await Supabase.instance.client
+          .from('conversation_participants')
+          .select('user_id')
+          .eq('conversation_id', summary.conversationId);
+      final memberIds = participantRows
+          .map((row) => (row as Map<String, dynamic>)['user_id'].toString())
+          .toSet()
+          .toList();
+      final encryptedPayload = await _e2ee.encryptForConversation(
+        conversationId: summary.conversationId,
+        plaintext: logText,
+        memberIds: memberIds,
+      );
+      await Supabase.instance.client.rpc(
+        'insert_message_for_current_user',
+        params: {
+          'p_conversation_id': summary.conversationId,
+          'p_ciphertext': encryptedPayload,
+        },
+      );
+      if (_selectedConversation?.id == summary.conversationId) {
+        await _loadMessages(summary.conversationId);
+      }
+      await _refreshConversations();
+    } catch (error) {
+      _showError('A hívásnaplót nem sikerült üzenetként elküldeni: $error');
+    }
+  }
+
 
   Future<void> _sendMessage() async {
     final conversation = _selectedConversation;
